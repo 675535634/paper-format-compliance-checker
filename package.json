@@ -1,0 +1,20 @@
+{
+  "name": "paper-format-compliance-checker",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Root scripts for the paper format compliance checker monorepo",
+  "scripts": {
+    "dev": "concurrently -n frontend,backend -c blue,green \"npm --prefix frontend run dev\" \"npm --prefix backend run dev\"",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build"
+  },
+  "keywords": [
+    "frontend",
+    "backend",
+    "monorepo"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

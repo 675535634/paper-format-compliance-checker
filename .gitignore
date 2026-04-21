@@ -1,0 +1,38 @@
+# Root allowlist: keep only app directories and root package files visible to Git.
+/*
+!/.gitignore
+!/package.json
+!/package-lock.json
+!/frontend/
+!/frontend/**
+!/backend/
+!/backend/**
+
+# Re-ignore generated files inside allowed directories.
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/*.log
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+**/lerna-debug.log*
+**/*.local
+**/.DS_Store
+**/.idea/
+**/*.suo
+**/*.ntvs*
+**/*.njsproj
+**/*.sln
+**/*.sw?
+
+# Editor cache
+**/.vscode/*
+!frontend/.vscode/extensions.json
+!backend/.vscode/extensions.json
+
+# Explicitly exclude root docs, prompts, and later root markdown files.
+/prompts/
+/PROJECT_PLAN.md
+/*.md

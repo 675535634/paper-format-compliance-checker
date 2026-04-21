@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { Form, Input, Select, Button, Card, Row, Col, Divider, message } from 'antd';
+import { useEffect, useState } from 'react';
+import { Form, Input, Select, Button, Card, Row, Col, Divider, message, Skeleton } from 'antd';
 import { api } from '../../api';
-import { useNavigate } from 'react-router-dom';
-import type { PaperRuleConfig } from '../../types';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import type { PaperRuleConfig, RuleTemplate } from '../../types';
 
 const { Option } = Select;
 
@@ -24,19 +24,55 @@ const defaultRules: PaperRuleConfig = {
 const RulesConfig: React.FC = () => {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [currentTemplate, setCurrentTemplate] = useState<RuleTemplate | null>(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const templateId = searchParams.get('templateId');
+
+  useEffect(() => {
+    if (!templateId) {
+      setCurrentTemplate(null);
+      form.setFieldsValue({
+        ...defaultRules,
+        templateName: '自定义格式模板',
+        description: ''
+      });
+      return;
+    }
+
+    const loadTemplate = async () => {
+      setLoading(true);
+      try {
+        const template = await api.getTemplate(templateId);
+        setCurrentTemplate(template);
+        form.setFieldsValue({
+          templateName: template.name,
+          description: template.description,
+          ...template.config,
+        });
+      } catch (error) {
+        message.error('加载模板失败');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadTemplate();
+  }, [form, templateId]);
 
   const handleSave = async (values: any) => {
     setSaving(true);
     try {
       const { templateName, description, ...config } = values;
       await api.saveTemplate({
+        id: currentTemplate?.id,
         name: templateName,
         description,
         config: config as PaperRuleConfig,
-        isDefault: false
+        isDefault: currentTemplate?.isDefault ?? false
       });
-      message.success('保存模板成功');
+      message.success(currentTemplate ? '模板更新成功' : '保存模板成功');
       navigate('/templates');
     } catch (e) {
       message.error('保存失败');
@@ -47,7 +83,10 @@ const RulesConfig: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 1000, margin: '0 auto' }}>
-      <Card bordered={false} title={<span style={{ fontSize: 20 }}>格式要求配置</span>}>
+      <Card bordered={false} title={<span style={{ fontSize: 20 }}>{currentTemplate ? '编辑格式模板' : '格式要求配置'}</span>}>
+        {loading ? (
+          <Skeleton active paragraph={{ rows: 12 }} />
+        ) : (
         <Form
           form={form}
           layout="vertical"
@@ -166,13 +205,29 @@ const RulesConfig: React.FC = () => {
 
           <div style={{ marginTop: 24, textAlign: 'center' }}>
             <Button type="primary" htmlType="submit" size="large" loading={saving} style={{ width: 160 }}>
-              保存为模板
+              {currentTemplate ? '保存修改' : '保存为模板'}
             </Button>
-            <Button size="large" style={{ marginLeft: 16 }} onClick={() => form.resetFields()}>
-              重置
+            <Button
+              size="large"
+              style={{ marginLeft: 16 }}
+              onClick={() => {
+                if (currentTemplate) {
+                  form.setFieldsValue({
+                    templateName: currentTemplate.name,
+                    description: currentTemplate.description,
+                    ...currentTemplate.config,
+                  });
+                  return;
+                }
+
+                form.resetFields();
+              }}
+            >
+              {currentTemplate ? '恢复原值' : '重置'}
             </Button>
           </div>
         </Form>
+        )}
       </Card>
     </div>
   );

@@ -38,6 +38,11 @@ export const api = {
     const { data } = await apiClient.get<RuleTemplate[]>('/templates');
     return data;
   },
+
+  getTemplate: async (id: string): Promise<RuleTemplate> => {
+    const { data } = await apiClient.get<RuleTemplate>(`/templates/${id}`);
+    return data;
+  },
   
   saveTemplate: async (template: Partial<RuleTemplate>): Promise<RuleTemplate> => {
     if (template.id) {
@@ -51,6 +56,16 @@ export const api = {
   
   deleteTemplate: async (id: string): Promise<void> => {
     await apiClient.delete(`/templates/${id}`);
+  },
+
+  copyTemplate: async (id: string): Promise<RuleTemplate> => {
+    const { data } = await apiClient.post<RuleTemplate>(`/templates/${id}/copy`);
+    return data;
+  },
+
+  applyTemplate: async (id: string): Promise<RuleTemplate> => {
+    const { data } = await apiClient.post<RuleTemplate>(`/templates/${id}/apply`);
+    return data;
   },
   
   uploadPaper: async (file: File): Promise<UploadedPaper> => {

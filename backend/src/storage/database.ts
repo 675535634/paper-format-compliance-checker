@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { env } from '../config/env.js';
 import { seedTemplates } from '../constants/defaults.js';
 import type { DatabaseState } from '../types/index.js';
@@ -15,6 +16,7 @@ let writeChain = Promise.resolve();
 export const ensureStorage = async (): Promise<void> => {
   await mkdir(env.dataDir, { recursive: true });
   await mkdir(env.uploadDir, { recursive: true });
+  await mkdir(path.dirname(env.databaseFile), { recursive: true });
 
   try {
     await readFile(env.databaseFile, 'utf8');

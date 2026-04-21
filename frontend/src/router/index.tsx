@@ -34,6 +34,10 @@ export const router = createBrowserRouter([
       {
         path: 'result',
         element: <CheckResultPage />
+      },
+      {
+        path: 'result/:checkId',
+        element: <CheckResultPage />
       }
     ]
   }

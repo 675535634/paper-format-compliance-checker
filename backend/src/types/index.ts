@@ -120,6 +120,13 @@ export interface ParsedParagraph {
   spacingBeforePt?: number;
   spacingAfterPt?: number;
   firstLineChars?: number;
+  numbering?: {
+    numId?: string;
+    level?: number;
+    format?: string;
+    levelText?: string;
+    isOrdered: boolean;
+  };
 }
 
 export interface ParsedDocxModel {
@@ -139,4 +146,5 @@ export interface ParsedDocxModel {
   defaultFontFamily?: string;
   defaultFontSizePt?: number;
   hasPageNumberField: boolean;
+  pageNumberAlignment?: string;
 }

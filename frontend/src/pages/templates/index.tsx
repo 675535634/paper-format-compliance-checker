@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 const TemplatesManage: React.FC = () => {
   const [templates, setTemplates] = useState<RuleTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const fetchTemplates = async () => {
@@ -26,13 +27,43 @@ const TemplatesManage: React.FC = () => {
     fetchTemplates();
   }, []);
 
+  const withTemplateAction = async (templateId: string, action: () => Promise<void>) => {
+    setActiveTemplateId(templateId);
+    try {
+      await action();
+    } finally {
+      setActiveTemplateId(null);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     try {
       await api.deleteTemplate(id);
       message.success('删除成功');
-      setTemplates(templates.filter(t => t.id !== id));
+      await fetchTemplates();
     } catch (e) {
       message.error('删除失败');
+    }
+  };
+
+  const handleCopy = async (id: string) => {
+    try {
+      await api.copyTemplate(id);
+      message.success('模板已复制');
+      await fetchTemplates();
+    } catch (e) {
+      message.error('复制失败');
+    }
+  };
+
+  const handleApply = async (id: string) => {
+    try {
+      await api.applyTemplate(id);
+      message.success('已设为默认模板，并跳转到检测页');
+      await fetchTemplates();
+      navigate(`/check?templateId=${encodeURIComponent(id)}`);
+    } catch (e) {
+      message.error('应用模板失败');
     }
   };
 
@@ -63,12 +94,34 @@ const TemplatesManage: React.FC = () => {
       key: 'action',
       render: (_: any, record: RuleTemplate) => (
         <Space size="middle">
-          <Button type="link" size="small" onClick={() => navigate('/check')}>应用</Button>
-          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => navigate('/rules')}>编辑</Button>
-          <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => message.success('复制成功')}>复制</Button>
+          <Button
+            type="link"
+            size="small"
+            loading={activeTemplateId === record.id}
+            onClick={() => void withTemplateAction(record.id, () => handleApply(record.id))}
+          >
+            应用
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => navigate(`/rules?templateId=${encodeURIComponent(record.id)}`)}
+          >
+            编辑
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<CopyOutlined />}
+            loading={activeTemplateId === record.id}
+            onClick={() => void withTemplateAction(record.id, () => handleCopy(record.id))}
+          >
+            复制
+          </Button>
           {!record.isDefault && (
-            <Popconfirm title="确定要删除这个模板吗？" onConfirm={() => handleDelete(record.id)}>
-              <Button type="link" danger size="small" icon={<DeleteOutlined />}>删除</Button>
+            <Popconfirm title="确定要删除这个模板吗？" onConfirm={() => void withTemplateAction(record.id, () => handleDelete(record.id))}>
+              <Button type="link" danger size="small" icon={<DeleteOutlined />} loading={activeTemplateId === record.id}>删除</Button>
             </Popconfirm>
           )}
         </Space>

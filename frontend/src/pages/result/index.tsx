@@ -1,7 +1,9 @@
-import { useState } from 'react';
-import { Card, Result, Button, Table, Tag, Typography, Space, Select, Empty, Alert, Radio, List } from 'antd';
+import { useEffect, useState } from 'react';
+import { Card, Result, Button, Table, Tag, Typography, Space, Select, Empty, Alert, Radio, List, Skeleton } from 'antd';
+import { ExclamationCircleOutlined } from '@ant-design/icons';
+import { api } from '../../api';
 import { useAppStore } from '../../store';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import type { CheckIssue } from '../../types';
 import { CATEGORY_MAP, SEVERITY_MAP } from '../../constants';
 
@@ -9,13 +11,78 @@ const { Text } = Typography;
 const { Option } = Select;
 
 const CheckResultPage: React.FC = () => {
-  const result = useAppStore(state => state.currentResult);
-  const currentPaper = useAppStore(state => state.currentPaper);
+  const storedResult = useAppStore(state => state.currentResult);
+  const storedPaper = useAppStore(state => state.currentPaper);
+  const setCurrentResult = useAppStore(state => state.setCurrentResult);
+  const setCurrentPaper = useAppStore(state => state.setCurrentPaper);
   const navigate = useNavigate();
+  const { checkId } = useParams();
 
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'table' | 'card'>('table');
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!checkId) {
+      setLoadError('');
+      return;
+    }
+
+    if (storedResult?.id === checkId && storedPaper) {
+      setLoadError('');
+      return;
+    }
+
+    const loadCheckResult = async () => {
+      setLoading(true);
+      setLoadError('');
+      try {
+        const [check, result] = await Promise.all([
+          api.getCheck(checkId),
+          api.getCheckResult(checkId),
+        ]);
+        const paper = await api.getUploadedPaper(check.paperId);
+        setCurrentResult(result);
+        setCurrentPaper(paper);
+      } catch (error) {
+        setLoadError('加载检测结果失败，请稍后重试。');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadCheckResult();
+  }, [checkId, setCurrentPaper, setCurrentResult, storedPaper, storedResult]);
+
+  const result = checkId && storedResult?.id !== checkId ? null : storedResult;
+  const currentPaper = checkId && storedResult?.id !== checkId ? null : storedPaper;
+
+  if (loading) {
+    return (
+      <Card bordered={false}>
+        <Skeleton active paragraph={{ rows: 10 }} />
+      </Card>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Card bordered={false}>
+        <Result
+          status="error"
+          icon={<ExclamationCircleOutlined />}
+          title="结果加载失败"
+          subTitle={loadError}
+          extra={[
+            <Button key="back" onClick={() => navigate('/dashboard')}>返回仪表盘</Button>,
+            <Button type="primary" key="retry" onClick={() => navigate(0)}>重新加载</Button>,
+          ]}
+        />
+      </Card>
+    );
+  }
 
   if (!result || !currentPaper) {
     return (
@@ -101,7 +168,7 @@ const CheckResultPage: React.FC = () => {
           subTitle={`文档名称：${currentPaper.filename} | 检测时间：${result.createdAt}`}
           extra={[
             <Button key="recheck" onClick={() => navigate('/check')}>重新检测</Button>,
-            <Button type="primary" key="export">导出报告</Button>,
+            <Button type="primary" key="export" disabled>导出报告</Button>,
           ]}
         />
       </Card>

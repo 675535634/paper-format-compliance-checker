@@ -13,6 +13,11 @@ interface StyleDefinition {
   runProperties?: XmlNode;
 }
 
+interface NumberingDefinition {
+  abstractNumId?: string;
+  levels: Map<number, { format?: string; levelText?: string; }>;
+}
+
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '',
@@ -24,6 +29,15 @@ const getZipEntryText = async (zip: JSZip, targetPath: string): Promise<string |
   const normalizedTarget = targetPath.replace(/\\/g, '/');
   const entryName = Object.keys(zip.files).find((name) => name.replace(/\\/g, '/') === normalizedTarget);
   return entryName ? zip.file(entryName)?.async('string') : undefined;
+};
+
+const parseLevelNumber = (value: string | undefined): number | undefined => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const numeric = Number.parseInt(value, 10);
+  return Number.isFinite(numeric) ? numeric : undefined;
 };
 
 const asArray = <T>(value: T | T[] | undefined): T[] => {
@@ -64,6 +78,9 @@ const getTextValue = (value: unknown): string => {
 
   return '';
 };
+
+const getParagraphAlignment = (paragraphNode: XmlNode | undefined): string | undefined =>
+  getWordAttr(toXmlObject(toXmlObject(paragraphNode)?.['w:pPr'])?.['w:jc'] as XmlNode | undefined, 'val');
 
 const twipsToCm = (value: string | undefined): number | undefined => {
   if (!value) {
@@ -155,6 +172,56 @@ const buildStyleMap = (stylesDocument: XmlNode | undefined): Map<string, StyleDe
   return map;
 };
 
+const buildNumberingMap = (numberingDocument: XmlNode | undefined): Map<string, NumberingDefinition> => {
+  const map = new Map<string, NumberingDefinition>();
+  const numberingRoot = toXmlObject(numberingDocument?.['w:numbering']);
+  if (!numberingRoot) {
+    return map;
+  }
+
+  const abstractDefinitions = new Map<string, NumberingDefinition>();
+  for (const abstractNode of asArray(toXmlObject(numberingRoot)?.['w:abstractNum'])) {
+    const abstractDefinition = toXmlObject(abstractNode);
+    const abstractNumId = getWordAttr(abstractDefinition, 'abstractNumId');
+    if (!abstractNumId) {
+      continue;
+    }
+
+    const levels = new Map<number, { format?: string; levelText?: string; }>();
+    for (const levelNode of asArray(toXmlObject(abstractDefinition)?.['w:lvl'])) {
+      const levelDefinition = toXmlObject(levelNode);
+      const level = parseLevelNumber(getWordAttr(levelDefinition, 'ilvl'));
+      if (level === undefined) {
+        continue;
+      }
+
+      levels.set(level, {
+        format: getWordAttr(toXmlObject(levelDefinition?.['w:numFmt']), 'val'),
+        levelText: getWordAttr(toXmlObject(levelDefinition?.['w:lvlText']), 'val'),
+      });
+    }
+
+    abstractDefinitions.set(abstractNumId, { abstractNumId, levels });
+  }
+
+  for (const numberingNode of asArray(toXmlObject(numberingRoot)?.['w:num'])) {
+    const numberingDefinition = toXmlObject(numberingNode);
+    const numId = getWordAttr(numberingDefinition, 'numId');
+    const abstractNumId = getWordAttr(toXmlObject(numberingDefinition?.['w:abstractNumId']), 'val');
+    if (!numId) {
+      continue;
+    }
+
+    const abstractDefinition = abstractNumId ? abstractDefinitions.get(abstractNumId) : undefined;
+    map.set(numId, {
+      abstractNumId,
+      levels: abstractDefinition?.levels ?? new Map(),
+    });
+  }
+
+  return map;
+};
+
 const resolveStyle = (
   styleId: string | undefined,
   styleMap: Map<string, StyleDefinition>,
@@ -227,6 +294,7 @@ const parseHeadingLevel = (styleId: string | undefined, styleName: string | unde
 const resolveParagraphMetrics = (
   paragraphNode: XmlNode,
   styleMap: Map<string, StyleDefinition>,
+  numberingMap: Map<string, NumberingDefinition>,
   defaults: { fontFamily?: string; fontSizePt?: number; }
 ): Omit<ParsedParagraph, 'index' | 'text'> => {
   const paragraphProperties = toXmlObject(paragraphNode['w:pPr']);
@@ -263,6 +331,12 @@ const resolveParagraphMetrics = (
   const indentation = toXmlObject(mergedParagraphProperties?.['w:ind']);
   const firstLineChars = Number.parseFloat(getWordAttr(indentation, 'firstLineChars') ?? '');
   const firstLineCharsValue = Number.isFinite(firstLineChars) ? firstLineChars / 100 : undefined;
+  const numberingProperties = toXmlObject(mergedParagraphProperties?.['w:numPr']);
+  const numId = getWordAttr(toXmlObject(numberingProperties?.['w:numId']), 'val');
+  const level = parseLevelNumber(getWordAttr(toXmlObject(numberingProperties?.['w:ilvl']), 'val'));
+  const numberingDefinition = numId ? numberingMap.get(numId) : undefined;
+  const levelDefinition = level !== undefined ? numberingDefinition?.levels.get(level) : undefined;
+  const numberingFormat = levelDefinition?.format;
 
   return {
     styleId,
@@ -275,6 +349,13 @@ const resolveParagraphMetrics = (
     spacingBeforePt: twipsToPt(getWordAttr(spacing, 'before')),
     spacingAfterPt: twipsToPt(getWordAttr(spacing, 'after')),
     firstLineChars: firstLineCharsValue,
+    numbering: numId ? {
+      numId,
+      level,
+      format: numberingFormat,
+      levelText: levelDefinition?.levelText,
+      isOrdered: Boolean(numberingFormat && numberingFormat !== 'bullet' && numberingFormat !== 'none'),
+    } : undefined,
   };
 };
 
@@ -306,9 +387,12 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
   }
 
   const stylesXml = await getZipEntryText(zip, 'word/styles.xml');
+  const numberingXml = await getZipEntryText(zip, 'word/numbering.xml');
   const documentRoot = xmlParser.parse(documentXml) as XmlNode;
   const stylesRoot = stylesXml ? xmlParser.parse(stylesXml) as XmlNode : undefined;
+  const numberingRoot = numberingXml ? xmlParser.parse(numberingXml) as XmlNode : undefined;
   const styleMap = buildStyleMap(stylesRoot);
+  const numberingMap = buildNumberingMap(numberingRoot);
   const defaults = getDocumentDefaults(stylesRoot);
 
   const body = toXmlObject(toXmlObject(documentRoot['w:document'])?.['w:body']);
@@ -323,7 +407,7 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
     return {
       index: index + 1,
       text: runText,
-      ...resolveParagraphMetrics(paragraphNode, styleMap, defaults),
+      ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults),
     };
   });
 
@@ -341,6 +425,16 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
   const hasPageNumberField = footerContents.some((footer) =>
     typeof footer === 'string' && (footer.includes('PAGE') || footer.includes('NUMPAGES'))
   );
+  const pageNumberFooter = footerContents.find((footer) =>
+    typeof footer === 'string' && (footer.includes('PAGE') || footer.includes('NUMPAGES'))
+  );
+  const pageNumberAlignment = pageNumberFooter
+    ? getParagraphAlignment(
+        asArray(toXmlObject((xmlParser.parse(pageNumberFooter) as XmlNode)?.['w:ftr'])?.['w:p'])
+          .map((item) => toXmlObject(item))
+          .find(Boolean) as XmlNode | undefined
+      )
+    : undefined;
 
   return {
     paragraphCount: paragraphs.length,
@@ -359,5 +453,6 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
     defaultFontFamily: defaults.fontFamily,
     defaultFontSizePt: defaults.fontSizePt,
     hasPageNumberField: Boolean(hasPageNumberField),
+    pageNumberAlignment,
   };
 };

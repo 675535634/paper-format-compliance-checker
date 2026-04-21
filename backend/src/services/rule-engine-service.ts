@@ -24,6 +24,12 @@ const fontSizeMap: Record<string, number> = {
   '小五': 9,
 };
 
+const alignmentAliases: Record<string, string[]> = {
+  left: ['left', '居左', '左对齐'],
+  center: ['center', 'centre', '居中', '中间'],
+  right: ['right', '居右', '右对齐'],
+};
+
 const addIssue = (
   issues: CheckIssue[],
   issue: Omit<CheckIssue, 'id'>
@@ -68,6 +74,18 @@ const parseNumericSpec = (value: string): number | undefined => {
   return Number.isFinite(numeric) ? numeric : undefined;
 };
 
+const parseExpectedAlignment = (value: string): string | undefined => {
+  const normalized = value.toLowerCase();
+
+  for (const [alignment, aliases] of Object.entries(alignmentAliases)) {
+    if (aliases.some((alias) => normalized.includes(alias.toLowerCase()))) {
+      return alignment;
+    }
+  }
+
+  return undefined;
+};
+
 const parseFontSizePt = (value: string): number | undefined => {
   if (fontSizeMap[value]) {
     return fontSizeMap[value];
@@ -79,6 +97,11 @@ const parseFontSizePt = (value: string): number | undefined => {
 
   return parseNumericSpec(value);
 };
+
+const parseExpectedFont = (value: string): string | undefined =>
+  Object.values(fontAliases)
+    .flat()
+    .find((alias) => value.toLowerCase().includes(alias.toLowerCase()));
 
 const parsePageSizeLabel = (value: string): string => value.trim().toUpperCase();
 
@@ -262,6 +285,25 @@ export const evaluateDocumentAgainstRules = (
     });
   }
 
+  const expectedPageNumberAlignment = parseExpectedAlignment(ruleConfig.pageNumberRule);
+  if (
+    ruleConfig.pageNumberRule
+    && documentModel.hasPageNumberField
+    && expectedPageNumberAlignment
+    && documentModel.pageNumberAlignment
+    && documentModel.pageNumberAlignment !== expectedPageNumberAlignment
+  ) {
+    addIssue(issues, {
+      category: 'page',
+      location: 'Footer',
+      currentValue: `Page number alignment ${documentModel.pageNumberAlignment}`,
+      expectedValue: `Page number alignment ${expectedPageNumberAlignment}`,
+      reason: 'The page number alignment does not match the configured rule.',
+      suggestion: `Adjust the footer page number alignment to ${expectedPageNumberAlignment}.`,
+      severity: 'medium',
+    });
+  }
+
   const bodyParagraphs = selectBodyParagraphs(documentModel);
   const firstMismatchedBody = bodyParagraphs.find((paragraph) =>
     paragraph.fontFamily && !fontMatches(ruleConfig.bodyFont, paragraph.fontFamily)
@@ -406,7 +448,7 @@ export const evaluateDocumentAgainstRules = (
     }
   }
 
-  const abstractParagraph = documentModel.paragraphs.find((paragraph) => /^(摘要|abstract)\b/i.test(paragraph.text));
+  const abstractParagraph = documentModel.paragraphs.find((paragraph) => /^(摘要|abstract\b)/i.test(paragraph.text));
   if (!abstractParagraph) {
     addIssue(issues, {
       category: 'other',
@@ -417,9 +459,40 @@ export const evaluateDocumentAgainstRules = (
       suggestion: 'Add a clearly marked abstract section using a standard heading title.',
       severity: 'medium',
     });
+  } else {
+    const expectedAbstractFont = parseExpectedFont(ruleConfig.abstractFormat);
+    const expectedAbstractFontSize = parseFontSizePt(ruleConfig.abstractFormat);
+
+    if (expectedAbstractFont && !fontMatches(expectedAbstractFont, abstractParagraph.fontFamily)) {
+      addIssue(issues, {
+        category: 'other',
+        location: humanParagraphLocation(abstractParagraph),
+        currentValue: abstractParagraph.fontFamily ?? 'Unknown',
+        expectedValue: expectedAbstractFont,
+        reason: 'The abstract title font does not match the configured format.',
+        suggestion: 'Adjust the abstract title font to match the rule.',
+        severity: 'medium',
+      });
+    }
+
+    if (
+      expectedAbstractFontSize !== undefined
+      && abstractParagraph.fontSizePt !== undefined
+      && !nearlyEqual(abstractParagraph.fontSizePt, expectedAbstractFontSize, 0.8)
+    ) {
+      addIssue(issues, {
+        category: 'other',
+        location: humanParagraphLocation(abstractParagraph),
+        currentValue: `${abstractParagraph.fontSizePt.toFixed(1)}pt`,
+        expectedValue: `${expectedAbstractFontSize.toFixed(1)}pt`,
+        reason: 'The abstract title font size does not match the configured format.',
+        suggestion: 'Adjust the abstract title font size to match the rule.',
+        severity: 'medium',
+      });
+    }
   }
 
-  const keywordsParagraph = documentModel.paragraphs.find((paragraph) => /(关键词|keywords?)[:：]/i.test(paragraph.text));
+  const keywordsParagraph = documentModel.paragraphs.find((paragraph) => /(关键词|keywords?)/i.test(paragraph.text));
   if (!keywordsParagraph) {
     addIssue(issues, {
       category: 'other',
@@ -430,6 +503,31 @@ export const evaluateDocumentAgainstRules = (
       suggestion: 'Add a keywords line after the abstract section.',
       severity: 'medium',
     });
+  } else {
+    if (!/(关键词|keywords?)[:：]/i.test(keywordsParagraph.text)) {
+      addIssue(issues, {
+        category: 'other',
+        location: humanParagraphLocation(keywordsParagraph),
+        currentValue: keywordsParagraph.text,
+        expectedValue: 'Keywords: keyword 1; keyword 2',
+        reason: 'The keywords line is missing a standard label and colon.',
+        suggestion: 'Rewrite the line to start with “关键词：” or “Keywords:”.',
+        severity: 'low',
+      });
+    }
+
+    const expectsSemicolonSeparator = /分号|semicolon/i.test(ruleConfig.keywordFormat);
+    if (expectsSemicolonSeparator && !/[;；]/.test(keywordsParagraph.text)) {
+      addIssue(issues, {
+        category: 'other',
+        location: humanParagraphLocation(keywordsParagraph),
+        currentValue: keywordsParagraph.text,
+        expectedValue: 'Keywords separated by semicolons',
+        reason: 'The keywords line does not use semicolon separators as configured.',
+        suggestion: 'Separate keywords with semicolons.',
+        severity: 'low',
+      });
+    }
   }
 
   const referencesHeadingIndex = documentModel.paragraphs.findIndex((paragraph) => /^(参考文献|references)$/i.test(paragraph.text));
@@ -449,17 +547,31 @@ export const evaluateDocumentAgainstRules = (
       .filter((paragraph) => paragraph.text)
       .slice(0, 5);
 
-    const numberingLooksValid = referenceEntries.some((paragraph) => /^\[\d+\]/.test(paragraph.text));
-    if (!numberingLooksValid && /gb\/t|ieee/i.test(ruleConfig.referenceFormat.toLowerCase())) {
+    if (referenceEntries.length === 0) {
       addIssue(issues, {
         category: 'reference',
         location: 'References section',
-        currentValue: referenceEntries[0]?.text ?? 'No reference entries found',
-        expectedValue: 'Entries should follow numbered reference formatting such as [1] ...',
-        reason: 'The reference list does not look like a numbered standard format.',
-        suggestion: 'Format the references with numbered entries that follow the configured standard.',
-        severity: 'low',
+        currentValue: 'No reference entries found',
+        expectedValue: 'At least one formatted reference entry',
+        reason: 'The document has a references heading but no reference content.',
+        suggestion: 'Add the reference entries below the references heading.',
+        severity: 'medium',
       });
+    } else {
+      const numberingLooksValid = referenceEntries.some((paragraph) =>
+        /^\[\d+\]/.test(paragraph.text) || Boolean(paragraph.numbering?.isOrdered)
+      );
+      if (!numberingLooksValid && /gb\/t|ieee/i.test(ruleConfig.referenceFormat.toLowerCase())) {
+        addIssue(issues, {
+          category: 'reference',
+          location: 'References section',
+          currentValue: referenceEntries[0]?.text ?? 'No reference entries found',
+          expectedValue: 'Entries should follow numbered reference formatting such as [1] ...',
+          reason: 'The reference list does not look like a numbered standard format.',
+          suggestion: 'Format the references with numbered entries that follow the configured standard.',
+          severity: 'low',
+        });
+      }
     }
   }
 

@@ -18,6 +18,7 @@ export const AppLayout: React.FC = () => {
   } = theme.useToken();
   const navigate = useNavigate();
   const location = useLocation();
+  const selectedMenuKey = location.pathname.startsWith('/result') ? '/result' : location.pathname;
 
   const menuItems = [
     {
@@ -61,7 +62,7 @@ export const AppLayout: React.FC = () => {
         </div>
         <Menu 
           theme="light" 
-          selectedKeys={[location.pathname]} 
+          selectedKeys={[selectedMenuKey]} 
           mode="inline" 
           items={menuItems} 
           onClick={({ key }) => navigate(key)}

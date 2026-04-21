@@ -5,12 +5,10 @@ import type { UploadProps } from 'antd';
 import { api } from '../../api';
 import type { RuleTemplate } from '../../types';
 import { useAppStore } from '../../store';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const { Title, Text, Paragraph } = Typography;
-console.log(Paragraph);
 const { Dragger } = Upload;
-const { Option: _Option } = Select;
 
 const CheckPaper: React.FC = () => {
   const [templates, setTemplates] = useState<RuleTemplate[]>([]);
@@ -22,15 +20,20 @@ const CheckPaper: React.FC = () => {
   const setCurrentResult = useAppStore(state => state.setCurrentResult);
   
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const templateIdFromUrl = searchParams.get('templateId');
 
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
         const data = await api.getTemplates();
         setTemplates(data);
-        const defaultTemplate = data.find(t => t.isDefault);
-        if (defaultTemplate) {
-          setSelectedTemplate(defaultTemplate.id);
+        const preferredTemplate = templateIdFromUrl
+          ? data.find(t => t.id === templateIdFromUrl)
+          : data.find(t => t.isDefault);
+
+        if (preferredTemplate) {
+          setSelectedTemplate(preferredTemplate.id);
         } else if (data.length > 0) {
           setSelectedTemplate(data[0].id);
         }
@@ -38,8 +41,8 @@ const CheckPaper: React.FC = () => {
         message.error('获取模板失败');
       }
     };
-    fetchTemplates();
-  }, []);
+    void fetchTemplates();
+  }, [templateIdFromUrl]);
 
   const props: UploadProps = {
     name: 'file',
@@ -82,7 +85,7 @@ const CheckPaper: React.FC = () => {
       const result = await api.checkPaperFormat(currentPaper.id, selectedTemplate);
       setCurrentResult(result);
       message.success('检测完成');
-      navigate('/result');
+      navigate(`/result/${result.id}`);
     } catch (e) {
       message.error('检测失败，请重试');
     } finally {

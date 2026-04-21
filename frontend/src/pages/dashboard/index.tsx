@@ -10,7 +10,6 @@ import { api } from '../../api';
 import type { RecentCheckItem } from '../../api';
 import type { DashboardStats } from '../../types';
 import { useNavigate } from 'react-router-dom';
-import { useAppStore } from '../../store';
 
 const { Title, Paragraph } = Typography;
 
@@ -18,8 +17,6 @@ const Dashboard: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentChecks, setRecentChecks] = useState<RecentCheckItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const setCurrentPaper = useAppStore(state => state.setCurrentPaper);
-  const setCurrentResult = useAppStore(state => state.setCurrentResult);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -39,21 +36,6 @@ const Dashboard: React.FC = () => {
     };
     fetchDashboardData();
   }, []);
-
-  const handleViewResult = async (checkId: string) => {
-    try {
-      const [check, result] = await Promise.all([
-        api.getCheck(checkId),
-        api.getCheckResult(checkId),
-      ]);
-      const paper = await api.getUploadedPaper(check.paperId);
-      setCurrentPaper(paper);
-      setCurrentResult(result);
-      navigate('/result');
-    } catch (error) {
-      console.error('Failed to load check result', error);
-    }
-  };
 
   return (
     <div>
@@ -112,11 +94,11 @@ const Dashboard: React.FC = () => {
       <Card bordered={false}>
         <List
           itemLayout="horizontal"
-          locale={{ emptyText: 'No recent checks yet' }}
+          locale={{ emptyText: '暂时还没有检测记录' }}
           dataSource={recentChecks}
           renderItem={(item) => (
             <List.Item
-              actions={[<a key="view" onClick={() => handleViewResult(item.id)}>查看结果</a>]}
+              actions={[<a key="view" onClick={() => navigate(`/result/${item.id}`)}>查看结果</a>]}
             >
               <List.Item.Meta
                 title={item.name}

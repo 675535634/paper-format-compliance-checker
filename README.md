@@ -28,7 +28,7 @@ In short: ship useful feedback loops early, then tighten the rules and polish.
 - Download parser/debug logs to verify whether the document was read correctly
 - Apply one-click fixes for high-confidence issues and export a corrected `.docx`
 - Manage multiple school or department rule templates
-- Support LAN development access and custom dev domains such as `*.nnsmxx.com`
+- Support LAN development access and configurable custom dev domains
 
 ## Tech Stack
 
@@ -86,7 +86,8 @@ LAN / custom dev access:
 
 - frontend listens on `0.0.0.0:16666`
 - backend listens on `0.0.0.0:16667`
-- Vite allows hosts under `*.nnsmxx.com`
+- Vite allows localhost by default and supports custom dev host allowlists through `DEV_ALLOWED_HOSTS`
+- Example: `DEV_ALLOWED_HOSTS=.dev.example.com,.lab.local`
 
 Build:
 

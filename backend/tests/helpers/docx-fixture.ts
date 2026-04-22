@@ -29,6 +29,7 @@ interface NumberingFixture {
 interface CreateDocxFixtureInput {
   paragraphs: ParagraphFixture[];
   numbering?: NumberingFixture[];
+  headers?: string[];
   includeFooterPageNumber?: boolean;
   footerAlignment?: 'left' | 'center' | 'right';
 }
@@ -127,6 +128,7 @@ export const createDocxFixture = async (input: CreateDocxFixtureInput): Promise<
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   ${input.numbering?.length ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ''}
+  ${input.headers?.length ? input.headers.map((_, index) => `<Override PartName="/word/header${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`).join('') : ''}
   ${input.includeFooterPageNumber ? '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' : ''}
 </Types>`);
 
@@ -167,6 +169,15 @@ export const createDocxFixture = async (input: CreateDocxFixtureInput): Promise<
   </w:p>
 </w:ftr>`);
   }
+
+  input.headers?.forEach((headerText, index) => {
+    zip.folder('word')?.file(`header${index + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:p>
+    <w:r><w:t>${xmlEscape(headerText)}</w:t></w:r>
+  </w:p>
+</w:hdr>`);
+  });
 
   zip.folder('word')?.file('document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">

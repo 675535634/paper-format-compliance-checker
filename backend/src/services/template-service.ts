@@ -6,6 +6,16 @@ import type { CreateTemplateInput, UpdateTemplateInput } from './validation-serv
 
 const now = () => new Date().toISOString();
 
+const mergeRuleConfig = (config?: Partial<PaperRuleConfig>): PaperRuleConfig => ({
+  ...defaultRuleConfig,
+  ...(config ?? {}),
+});
+
+const hydrateTemplate = (template: RuleTemplate): RuleTemplate => ({
+  ...template,
+  config: mergeRuleConfig(template.config),
+});
+
 const normalizeTemplateFlags = (templates: RuleTemplate[], defaultTemplateId?: string): RuleTemplate[] =>
   templates.map((template) => ({
     ...template,
@@ -14,20 +24,29 @@ const normalizeTemplateFlags = (templates: RuleTemplate[], defaultTemplateId?: s
 
 export const listTemplates = async (): Promise<RuleTemplate[]> => {
   const db = await readDatabase();
-  return [...db.templates].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  return [...db.templates]
+    .map(hydrateTemplate)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 };
 
 export const getTemplateById = async (id: string): Promise<RuleTemplate | undefined> => {
   const db = await readDatabase();
-  return db.templates.find((template) => template.id === id);
+  const template = db.templates.find((item) => item.id === id);
+  return template ? hydrateTemplate(template) : undefined;
 };
 
 export const getDefaultTemplate = async (): Promise<RuleTemplate> => {
   const db = await readDatabase();
-  return db.templates.find((template) => template.isDefault) ?? db.templates[0] ?? {
+  const template = db.templates.find((item) => item.isDefault) ?? db.templates[0];
+
+  if (template) {
+    return hydrateTemplate(template);
+  }
+
+  return {
     id: createId('tpl'),
-    name: 'Default Template',
-    description: 'Generated fallback template.',
+    name: '默认模板',
+    description: '系统自动生成的兜底模板。',
     config: defaultRuleConfig,
     updatedAt: now(),
     isDefault: true,
@@ -40,7 +59,7 @@ export const createTemplate = async (input: CreateTemplateInput): Promise<RuleTe
       id: createId('tpl'),
       name: input.name,
       description: input.description,
-      config: input.config,
+      config: mergeRuleConfig(input.config),
       updatedAt: now(),
       isDefault: input.isDefault ?? false,
     };
@@ -65,7 +84,7 @@ export const updateTemplate = async (id: string, input: UpdateTemplateInput): Pr
     const nextTemplate: RuleTemplate = {
       ...existing,
       ...input,
-      config: input.config ?? existing.config,
+      config: input.config ? mergeRuleConfig(input.config) : mergeRuleConfig(existing.config),
       isDefault: input.isDefault ?? existing.isDefault,
       updatedAt: now(),
     };
@@ -110,9 +129,9 @@ export const copyTemplate = async (id: string): Promise<RuleTemplate | undefined
     }
 
     const copy: RuleTemplate = {
-      ...template,
+      ...hydrateTemplate(template),
       id: createId('tpl'),
-      name: `${template.name} Copy`,
+      name: `${template.name}（副本）`,
       isDefault: false,
       updatedAt: now(),
     };
@@ -151,7 +170,7 @@ export const resolveRuleConfig = async (templateId?: string, inlineRuleConfig?: 
   if (inlineRuleConfig) {
     return {
       templateId: templateId ?? 'inline_rule_config',
-      config: inlineRuleConfig,
+      config: mergeRuleConfig(inlineRuleConfig),
     };
   }
 
@@ -159,7 +178,7 @@ export const resolveRuleConfig = async (templateId?: string, inlineRuleConfig?: 
     const defaultTemplate = await getDefaultTemplate();
     return {
       templateId: defaultTemplate.id,
-      config: defaultTemplate.config,
+      config: mergeRuleConfig(defaultTemplate.config),
     };
   }
 
@@ -170,6 +189,6 @@ export const resolveRuleConfig = async (templateId?: string, inlineRuleConfig?: 
 
   return {
     templateId: template.id,
-    config: template.config,
+    config: mergeRuleConfig(template.config),
   };
 };

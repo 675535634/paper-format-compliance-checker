@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Layout, Menu, theme } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { 
-  DashboardOutlined, 
-  FileSearchOutlined, 
-  SettingOutlined, 
-  ProfileOutlined, 
-  FileDoneOutlined 
+import {
+  DashboardOutlined,
+  FileSearchOutlined,
+  SettingOutlined,
+  ProfileOutlined,
+  FileDoneOutlined,
 } from '@ant-design/icons';
 
 const { Header, Content, Sider } = Layout;
@@ -24,7 +24,7 @@ export const AppLayout: React.FC = () => {
     {
       key: '/dashboard',
       icon: <DashboardOutlined />,
-      label: '仪表盘',
+      label: '概览',
     },
     {
       key: '/check',
@@ -34,7 +34,7 @@ export const AppLayout: React.FC = () => {
     {
       key: '/rules',
       icon: <SettingOutlined />,
-      label: '格式要求',
+      label: '规则配置',
     },
     {
       key: '/templates',
@@ -50,28 +50,52 @@ export const AppLayout: React.FC = () => {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider 
-        collapsible 
-        collapsed={collapsed} 
+      <Sider
+        collapsible
+        collapsed={collapsed}
         onCollapse={(value) => setCollapsed(value)}
         theme="light"
         style={{ borderRight: '1px solid #f0f0f0' }}
       >
-        <div style={{ height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: collapsed ? 14 : 18, color: '#1677ff', borderBottom: '1px solid #f0f0f0', whiteSpace: 'nowrap', overflow: 'hidden' }}>
-          {collapsed ? 'PFCC' : 'Paper Checker'}
+        <div
+          style={{
+            height: 64,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 'bold',
+            fontSize: collapsed ? 14 : 18,
+            color: '#1677ff',
+            borderBottom: '1px solid #f0f0f0',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+          }}
+        >
+          {collapsed ? 'PFCC' : '论文格式检查'}
         </div>
-        <Menu 
-          theme="light" 
-          selectedKeys={[selectedMenuKey]} 
-          mode="inline" 
-          items={menuItems} 
+        <Menu
+          theme="light"
+          selectedKeys={[selectedMenuKey]}
+          mode="inline"
+          items={menuItems}
           onClick={({ key }) => navigate(key)}
           style={{ borderRight: 0 }}
         />
       </Sider>
       <Layout>
-        <Header style={{ padding: 0, background: colorBgContainer, display: 'flex', alignItems: 'center', borderBottom: '1px solid #f0f0f0', paddingLeft: 24, paddingRight: 24, justifyContent: 'flex-end' }}>
-          <div style={{ fontWeight: 500 }}>欢迎, Admin</div>
+        <Header
+          style={{
+            padding: 0,
+            background: colorBgContainer,
+            display: 'flex',
+            alignItems: 'center',
+            borderBottom: '1px solid #f0f0f0',
+            paddingLeft: 24,
+            paddingRight: 24,
+            justifyContent: 'flex-end',
+          }}
+        >
+          <div style={{ fontWeight: 500 }}>论文格式合规检查系统</div>
         </Header>
         <Content style={{ margin: '24px', display: 'flex', flexDirection: 'column' }}>
           <div
@@ -80,7 +104,7 @@ export const AppLayout: React.FC = () => {
               minHeight: 360,
               background: colorBgContainer,
               borderRadius: borderRadiusLG,
-              flex: 1
+              flex: 1,
             }}
           >
             <Outlet />

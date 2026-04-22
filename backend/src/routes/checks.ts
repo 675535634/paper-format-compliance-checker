@@ -1,6 +1,14 @@
 import { Router } from 'express';
 import { HttpError } from '../middleware/error-handler.js';
-import { createCheck, getCheckById, getCheckResult, listChecks, retryCheck } from '../services/check-service.js';
+import {
+  createCheck,
+  createFixedDocumentForCheck,
+  getCheckById,
+  getCheckDebugLog,
+  getCheckResult,
+  listChecks,
+  retryCheck,
+} from '../services/check-service.js';
 import { createCheckSchema } from '../services/validation-service.js';
 
 export const checksRouter = Router();
@@ -31,6 +39,30 @@ checksRouter.get('/:id/result', async (request, response) => {
   }
 
   response.json(result);
+});
+
+checksRouter.get('/:id/debug-log', async (request, response) => {
+  const debugLog = await getCheckDebugLog(request.params.id);
+  if (!debugLog) {
+    throw new HttpError(404, `Debug log for ${request.params.id} was not found.`);
+  }
+
+  const filename = `${request.params.id}.debug.json`;
+  response.setHeader('content-type', 'application/json; charset=utf-8');
+  response.setHeader('content-disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  response.send(debugLog);
+});
+
+checksRouter.get('/:id/fix-download', async (request, response) => {
+  try {
+    const fixedDocument = await createFixedDocumentForCheck(request.params.id);
+    response.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    response.setHeader('content-disposition', `attachment; filename="${fixedDocument.filename}"; filename*=UTF-8''${encodeURIComponent(fixedDocument.filename)}`);
+    response.send(fixedDocument.buffer);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : `Fix download for ${request.params.id} failed.`;
+    throw new HttpError(404, message);
+  }
 });
 
 checksRouter.post('/:id/retry', async (request, response) => {

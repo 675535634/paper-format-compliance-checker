@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Table, Card, Button, Space, Tag, Popconfirm, message } from 'antd';
+import { Table, Card, Button, Space, Tag, Popconfirm, message, Typography } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
 import { api } from '../../api';
 import type { RuleTemplate } from '../../types';
 import { useNavigate } from 'react-router-dom';
+
+const { Paragraph } = Typography;
 
 const TemplatesManage: React.FC = () => {
   const [templates, setTemplates] = useState<RuleTemplate[]>([]);
@@ -16,7 +18,7 @@ const TemplatesManage: React.FC = () => {
     try {
       const data = await api.getTemplates();
       setTemplates(data);
-    } catch (e) {
+    } catch {
       message.error('获取模板失败');
     } finally {
       setLoading(false);
@@ -24,7 +26,7 @@ const TemplatesManage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchTemplates();
+    void fetchTemplates();
   }, []);
 
   const withTemplateAction = async (templateId: string, action: () => Promise<void>) => {
@@ -39,10 +41,10 @@ const TemplatesManage: React.FC = () => {
   const handleDelete = async (id: string) => {
     try {
       await api.deleteTemplate(id);
-      message.success('删除成功');
+      message.success('模板已删除');
       await fetchTemplates();
-    } catch (e) {
-      message.error('删除失败');
+    } catch {
+      message.error('删除模板失败');
     }
   };
 
@@ -51,8 +53,8 @@ const TemplatesManage: React.FC = () => {
       await api.copyTemplate(id);
       message.success('模板已复制');
       await fetchTemplates();
-    } catch (e) {
-      message.error('复制失败');
+    } catch {
+      message.error('复制模板失败');
     }
   };
 
@@ -62,7 +64,7 @@ const TemplatesManage: React.FC = () => {
       message.success('已设为默认模板，并跳转到检测页');
       await fetchTemplates();
       navigate(`/check?templateId=${encodeURIComponent(id)}`);
-    } catch (e) {
+    } catch {
       message.error('应用模板失败');
     }
   };
@@ -77,22 +79,24 @@ const TemplatesManage: React.FC = () => {
           <span style={{ fontWeight: 500 }}>{text}</span>
           {record.isDefault && <Tag color="blue">默认</Tag>}
         </Space>
-      )
+      ),
     },
     {
       title: '说明',
       dataIndex: 'description',
       key: 'description',
+      render: (text: string) => text || '-',
     },
     {
       title: '更新时间',
       dataIndex: 'updatedAt',
       key: 'updatedAt',
+      render: (value: string) => value.replace('T', ' ').slice(0, 19),
     },
     {
       title: '操作',
       key: 'action',
-      render: (_: any, record: RuleTemplate) => (
+      render: (_: unknown, record: RuleTemplate) => (
         <Space size="middle">
           <Button
             type="link"
@@ -120,8 +124,15 @@ const TemplatesManage: React.FC = () => {
             复制
           </Button>
           {!record.isDefault && (
-            <Popconfirm title="确定要删除这个模板吗？" onConfirm={() => void withTemplateAction(record.id, () => handleDelete(record.id))}>
-              <Button type="link" danger size="small" icon={<DeleteOutlined />} loading={activeTemplateId === record.id}>删除</Button>
+            <Popconfirm
+              title="确定要删除这个模板吗？"
+              okText="删除"
+              cancelText="取消"
+              onConfirm={() => void withTemplateAction(record.id, () => handleDelete(record.id))}
+            >
+              <Button type="link" danger size="small" icon={<DeleteOutlined />} loading={activeTemplateId === record.id}>
+                删除
+              </Button>
             </Popconfirm>
           )}
         </Space>
@@ -131,8 +142,8 @@ const TemplatesManage: React.FC = () => {
 
   return (
     <div>
-      <Card 
-        bordered={false} 
+      <Card
+        variant="borderless"
         title={<span style={{ fontSize: 20 }}>模板管理</span>}
         extra={
           <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/rules')}>
@@ -140,10 +151,14 @@ const TemplatesManage: React.FC = () => {
           </Button>
         }
       >
-        <Table 
-          columns={columns} 
-          dataSource={templates} 
-          rowKey="id" 
+        <Paragraph type="secondary" style={{ marginTop: -4 }}>
+          可以在这里维护学校模板、专业模板或个人常用模板，并将其中一个模板设为默认检测规则。
+        </Paragraph>
+
+        <Table
+          columns={columns}
+          dataSource={templates}
+          rowKey="id"
           loading={loading}
           pagination={false}
         />

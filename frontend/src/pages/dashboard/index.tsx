@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Row, Col, Card, Statistic, Typography, List, Tag, Skeleton } from 'antd';
-import { 
-  FileDoneOutlined, 
-  HistoryOutlined, 
-  ClockCircleOutlined, 
-  WarningOutlined 
+import { Row, Col, Card, Statistic, Typography, Tag, Skeleton, Empty, Space } from 'antd';
+import {
+  FileDoneOutlined,
+  HistoryOutlined,
+  ClockCircleOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { api } from '../../api';
 import type { RecentCheckItem } from '../../api';
@@ -34,7 +34,8 @@ const Dashboard: React.FC = () => {
         setLoading(false);
       }
     };
-    fetchDashboardData();
+
+    void fetchDashboardData();
   }, []);
 
   return (
@@ -42,7 +43,7 @@ const Dashboard: React.FC = () => {
       <Typography>
         <Title level={2}>系统概览</Title>
         <Paragraph>
-          欢迎使用论文格式合规检查系统。在这里您可以快速了解格式规范并检测您的论文格式。
+          在这里可以查看模板数量、最近检测记录和待处理问题，也可以从最近一次检测快速进入结果页继续核对。
         </Paragraph>
       </Typography>
 
@@ -51,68 +52,80 @@ const Dashboard: React.FC = () => {
       ) : (
         <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
           <Col xs={24} sm={12} md={6}>
-            <Card bordered={false} hoverable>
-              <Statistic 
-                title="模板总数" 
-                value={stats?.totalTemplates} 
-                prefix={<FileDoneOutlined style={{ color: '#1677ff' }} />} 
+            <Card variant="borderless" hoverable>
+              <Statistic
+                title="模板总数"
+                value={stats?.totalTemplates ?? 0}
+                prefix={<FileDoneOutlined style={{ color: '#1677ff' }} />}
               />
             </Card>
           </Col>
           <Col xs={24} sm={12} md={6}>
-            <Card bordered={false} hoverable>
-              <Statistic 
-                title="最近检测次数" 
-                value={stats?.recentCheckCount} 
-                prefix={<HistoryOutlined style={{ color: '#52c41a' }} />} 
+            <Card variant="borderless" hoverable>
+              <Statistic
+                title="最近检测次数"
+                value={stats?.recentCheckCount ?? 0}
+                prefix={<HistoryOutlined style={{ color: '#52c41a' }} />}
               />
             </Card>
           </Col>
           <Col xs={24} sm={12} md={6}>
-            <Card bordered={false} hoverable>
-              <Statistic 
-                title="待修正问题" 
-                value={stats?.pendingFixIssues} 
-                prefix={<WarningOutlined style={{ color: '#faad14' }} />} 
+            <Card variant="borderless" hoverable>
+              <Statistic
+                title="待修正问题"
+                value={stats?.pendingFixIssues ?? 0}
+                prefix={<WarningOutlined style={{ color: '#faad14' }} />}
               />
             </Card>
           </Col>
           <Col xs={24} sm={12} md={6}>
-            <Card bordered={false} hoverable>
-              <Statistic 
-                title="最近一次检测时间" 
-                value={stats?.lastCheckTime?.replace('T', ' ').split(' ')[0]} 
-                prefix={<ClockCircleOutlined style={{ color: '#722ed1' }} />} 
-                valueStyle={{ fontSize: 18, marginTop: 8 }}
+            <Card variant="borderless" hoverable>
+              <Statistic
+                title="最近一次检测日期"
+                value={stats?.lastCheckTime ? stats.lastCheckTime.replace('T', ' ').split(' ')[0] : '-'}
+                prefix={<ClockCircleOutlined style={{ color: '#722ed1' }} />}
+                styles={{ content: { fontSize: 18, marginTop: 8 } }}
               />
             </Card>
           </Col>
         </Row>
       )}
 
-      <Title level={4} style={{ marginTop: 40, marginBottom: 16 }}>最近检测记录</Title>
-      <Card bordered={false}>
-        <List
-          itemLayout="horizontal"
-          locale={{ emptyText: '暂时还没有检测记录' }}
-          dataSource={recentChecks}
-          renderItem={(item) => (
-            <List.Item
-              actions={[<a key="view" onClick={() => navigate(`/result/${item.id}`)}>查看结果</a>]}
-            >
-              <List.Item.Meta
-                title={item.name}
-                description={`检测时间: ${item.time}`}
-              />
-              <div style={{ marginRight: 32 }}>
-                <Tag color={item.status === 'completed' ? 'success' : 'processing'}>
-                  {item.status === 'completed' ? '已完成' : '检测中'}
-                </Tag>
-                {item.issues > 0 && <span style={{ color: '#faad14', marginLeft: 16 }}>发现 {item.issues} 处问题</span>}
+      <Title level={4} style={{ marginTop: 40, marginBottom: 16 }}>
+        最近检测记录
+      </Title>
+      <Card variant="borderless">
+        {recentChecks.length === 0 ? (
+          <Empty description="暂时还没有检测记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : (
+          <Space direction="vertical" size={0} style={{ width: '100%' }}>
+            {recentChecks.map((item, index) => (
+              <div
+                key={item.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  padding: '16px 0',
+                  borderBottom: index === recentChecks.length - 1 ? 'none' : '1px solid #f0f0f0',
+                }}
+              >
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>{item.name}</div>
+                  <div style={{ color: '#8c8c8c' }}>{`检测时间：${item.time}`}</div>
+                </div>
+                <Space size={12} wrap>
+                  <Tag color={item.status === 'completed' ? 'success' : 'processing'}>
+                    {item.status === 'completed' ? '已完成' : '检测中'}
+                  </Tag>
+                  {item.issues > 0 && <span style={{ color: '#faad14' }}>{`发现 ${item.issues} 处问题`}</span>}
+                  <a onClick={() => navigate(`/result/${item.id}`)}>查看结果</a>
+                </Space>
               </div>
-            </List.Item>
-          )}
-        />
+            ))}
+          </Space>
+        )}
       </Card>
     </div>
   );

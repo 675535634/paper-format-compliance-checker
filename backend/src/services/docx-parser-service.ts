@@ -15,7 +15,7 @@ interface StyleDefinition {
 
 interface NumberingDefinition {
   abstractNumId?: string;
-  levels: Map<number, { format?: string; levelText?: string; }>;
+  levels: Map<number, { format?: string; levelText?: string }>;
 }
 
 const xmlParser = new XMLParser({
@@ -187,7 +187,7 @@ const buildNumberingMap = (numberingDocument: XmlNode | undefined): Map<string, 
       continue;
     }
 
-    const levels = new Map<number, { format?: string; levelText?: string; }>();
+    const levels = new Map<number, { format?: string; levelText?: string }>();
     for (const levelNode of asArray(toXmlObject(abstractDefinition)?.['w:lvl'])) {
       const levelDefinition = toXmlObject(levelNode);
       const level = parseLevelNumber(getWordAttr(levelDefinition, 'ilvl'));
@@ -273,6 +273,24 @@ const collectRunNodes = (paragraphNode: XmlNode): XmlNode[] => {
   return [...directRuns, ...hyperlinkRuns];
 };
 
+const extractParagraphText = (paragraphNode: XmlNode): string =>
+  collectRunNodes(paragraphNode)
+    .map((runNode) => getTextValue(runNode['w:t']))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const extractDocumentParagraphTexts = (xml: string, rootKey: 'w:hdr' | 'w:ftr'): string[] => {
+  const root = xmlParser.parse(xml) as XmlNode;
+  const paragraphs = asArray(toXmlObject(root[rootKey])?.['w:p'])
+    .map((item) => toXmlObject(item))
+    .filter(Boolean) as XmlNode[];
+
+  return paragraphs
+    .map((paragraphNode) => extractParagraphText(paragraphNode))
+    .filter(Boolean);
+};
+
 const parseHeadingLevel = (styleId: string | undefined, styleName: string | undefined, paragraphProperties?: XmlNode): number | undefined => {
   const outlineLevel = getWordAttr(toXmlObject(paragraphProperties?.['w:outlineLvl']), 'val');
   if (outlineLevel) {
@@ -295,7 +313,7 @@ const resolveParagraphMetrics = (
   paragraphNode: XmlNode,
   styleMap: Map<string, StyleDefinition>,
   numberingMap: Map<string, NumberingDefinition>,
-  defaults: { fontFamily?: string; fontSizePt?: number; }
+  defaults: { fontFamily?: string; fontSizePt?: number }
 ): Omit<ParsedParagraph, 'index' | 'text'> => {
   const paragraphProperties = toXmlObject(paragraphNode['w:pPr']);
   const styleId = getWordAttr(toXmlObject(paragraphProperties?.['w:pStyle']), 'val');
@@ -342,6 +360,7 @@ const resolveParagraphMetrics = (
     styleId,
     styleName: resolvedStyle?.name,
     headingLevel: parseHeadingLevel(styleId, resolvedStyle?.name, mergedParagraphProperties),
+    alignment: getParagraphAlignment({ 'w:pPr': mergedParagraphProperties } as XmlNode) as 'left' | 'center' | 'right' | undefined,
     fontFamily,
     fontSizePt,
     lineHeight,
@@ -397,19 +416,11 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
 
   const body = toXmlObject(toXmlObject(documentRoot['w:document'])?.['w:body']);
   const paragraphNodes = asArray(toXmlObject(body)?.['w:p']).map((item) => toXmlObject(item)).filter(Boolean) as XmlNode[];
-  const paragraphs: ParsedParagraph[] = paragraphNodes.map((paragraphNode, index) => {
-    const runText = collectRunNodes(paragraphNode)
-      .map((runNode) => getTextValue(runNode['w:t']))
-      .join('')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    return {
-      index: index + 1,
-      text: runText,
-      ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults),
-    };
-  });
+  const paragraphs: ParsedParagraph[] = paragraphNodes.map((paragraphNode, index) => ({
+    index: index + 1,
+    text: extractParagraphText(paragraphNode),
+    ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults),
+  }));
 
   const sectionProperties = getSectionProperties(documentRoot);
   const pageSize = toXmlObject(sectionProperties?.['w:pgSz']);
@@ -422,6 +433,12 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
       .filter((name) => name.replace(/\\/g, '/').startsWith('word/footer'))
       .map(async (name) => zip.file(name)?.async('string'))
   );
+  const headerContents = await Promise.all(
+    Object.keys(zip.files)
+      .filter((name) => name.replace(/\\/g, '/').startsWith('word/header'))
+      .map(async (name) => zip.file(name)?.async('string'))
+  );
+
   const hasPageNumberField = footerContents.some((footer) =>
     typeof footer === 'string' && (footer.includes('PAGE') || footer.includes('NUMPAGES'))
   );
@@ -439,6 +456,9 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
   return {
     paragraphCount: paragraphs.length,
     paragraphs,
+    headerTexts: headerContents
+      .flatMap((header) => typeof header === 'string' ? extractDocumentParagraphTexts(header, 'w:hdr') : [])
+      .filter(Boolean),
     pageSize: widthCm && heightCm ? {
       widthCm,
       heightCm,

@@ -1,6 +1,9 @@
 export interface PaperRuleConfig {
   pageSize: string;
   margin: string;
+  headerRule?: string;
+  coverItems?: string;
+  requiredSections?: string;
   bodyFont: string;
   bodyFontSize: string;
   lineHeight: number | string;
@@ -11,6 +14,8 @@ export interface PaperRuleConfig {
   abstractFormat: string;
   keywordFormat: string;
   referenceFormat: string;
+  figureCaptionRule?: string;
+  tableCaptionRule?: string;
 }
 
 export interface RuleTemplate {

@@ -6,8 +6,12 @@ const bootstrap = async (): Promise<void> => {
   await ensureStorage();
 
   const app = createApp();
-  app.listen(env.port, () => {
-    console.log(`Paper format checker backend is running on http://localhost:${env.port}`);
+  app.listen(env.port, env.host, () => {
+    const displayHost = env.host === '0.0.0.0' ? 'localhost' : env.host;
+    console.log(`Paper format checker backend is running on http://${displayHost}:${env.port}`);
+    if (env.host === '0.0.0.0') {
+      console.log(`LAN access enabled on port ${env.port}.`);
+    }
   });
 };
 

@@ -1,7 +1,9 @@
 import { readDatabase, updateDatabase } from '../storage/database.js';
 import type { CheckResult, CheckTask, StoredCheckResult } from '../types/index.js';
 import { createId } from './id-service.js';
+import { writeCheckDebugLog, getCheckDebugLog as readCheckDebugLog } from './check-debug-log-service.js';
 import { parseDocxFile } from './docx-parser-service.js';
+import { createFixedDocumentDownload } from './docx-fix-service.js';
 import { getUploadedFileById } from './file-service.js';
 import { evaluateDocumentAgainstRules } from './rule-engine-service.js';
 import { resolveRuleConfig } from './template-service.js';
@@ -41,6 +43,9 @@ export const getCheckResult = async (checkId: string): Promise<CheckResult | und
   const result = db.results.find((item) => item.checkId === checkId);
   return result ? toApiResult(result) : undefined;
 };
+
+export const getCheckDebugLog = async (checkId: string): Promise<string | undefined> =>
+  readCheckDebugLog(checkId);
 
 const persistPendingCheck = async (input: { paperId: string; templateId: string }): Promise<CheckTask> =>
   updateDatabase((state) => {
@@ -122,6 +127,14 @@ const executeCheck = async (checkId: string, paperId: string, templateId?: strin
     const parsedDocument = await parseDocxFile(uploadedFile.storagePath);
     const issues = evaluateDocumentAgainstRules(parsedDocument, resolvedRuleSet.config);
 
+    await writeCheckDebugLog({
+      checkId,
+      uploadedFile,
+      ruleConfig: resolvedRuleSet.config,
+      parsedDocument,
+      issues,
+    });
+
     const storedResult: StoredCheckResult = {
       id: createId('result'),
       checkId,
@@ -166,4 +179,29 @@ export const retryCheck = async (checkId: string): Promise<CheckTask | undefined
 
   await executeCheck(checkId, existing.paperId, existing.templateId);
   return getCheckById(checkId);
+};
+
+export const createFixedDocumentForCheck = async (checkId: string): Promise<{
+  buffer: Buffer;
+  filename: string;
+}> => {
+  const check = await getCheckById(checkId);
+  if (!check) {
+    throw new Error(`Check ${checkId} was not found.`);
+  }
+
+  const uploadedFile = await getUploadedFileById(check.paperId);
+  if (!uploadedFile) {
+    throw new Error(`Uploaded file ${check.paperId} was not found.`);
+  }
+
+  const resolvedRuleSet = await resolveRuleConfig(check.templateId);
+  const parsedDocument = await parseDocxFile(uploadedFile.storagePath);
+
+  return createFixedDocumentDownload({
+    filePath: uploadedFile.storagePath,
+    originalFilename: uploadedFile.filename,
+    parsedDocument,
+    ruleConfig: resolvedRuleSet.config,
+  });
 };

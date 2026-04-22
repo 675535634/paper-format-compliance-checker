@@ -6,6 +6,9 @@ export type CheckStatus = 'pending' | 'checking' | 'completed' | 'failed';
 export interface PaperRuleConfig {
   pageSize: string;
   margin: string;
+  headerRule?: string;
+  coverItems?: string;
+  requiredSections?: string;
   bodyFont: string;
   bodyFontSize: string;
   lineHeight: number | string;
@@ -16,6 +19,8 @@ export interface PaperRuleConfig {
   abstractFormat: string;
   keywordFormat: string;
   referenceFormat: string;
+  figureCaptionRule?: string;
+  tableCaptionRule?: string;
 }
 
 export interface RuleTemplate {
@@ -113,6 +118,7 @@ export interface ParsedParagraph {
   styleId?: string;
   styleName?: string;
   headingLevel?: number;
+  alignment?: 'left' | 'center' | 'right';
   fontFamily?: string;
   fontSizePt?: number;
   lineHeight?: number;
@@ -132,6 +138,7 @@ export interface ParsedParagraph {
 export interface ParsedDocxModel {
   paragraphCount: number;
   paragraphs: ParsedParagraph[];
+  headerTexts: string[];
   pageSize?: {
     widthCm: number;
     heightCm: number;

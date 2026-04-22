@@ -3,6 +3,9 @@ import { z } from 'zod';
 export const paperRuleConfigSchema = z.object({
   pageSize: z.string().min(1),
   margin: z.string().min(1),
+  headerRule: z.string().default(''),
+  coverItems: z.string().default(''),
+  requiredSections: z.string().default(''),
   bodyFont: z.string().min(1),
   bodyFontSize: z.string().min(1),
   lineHeight: z.union([z.string().min(1), z.number()]),
@@ -13,6 +16,8 @@ export const paperRuleConfigSchema = z.object({
   abstractFormat: z.string().min(1),
   keywordFormat: z.string().min(1),
   referenceFormat: z.string().min(1),
+  figureCaptionRule: z.string().default(''),
+  tableCaptionRule: z.string().default(''),
 });
 
 export const createTemplateSchema = z.object({

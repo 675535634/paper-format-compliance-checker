@@ -18,10 +18,29 @@ export interface RecentCheckItem {
   issues: number;
 }
 
+interface DownloadResponse {
+  blob: Blob;
+  filename: string;
+}
+
 const apiClient = axios.create({
   baseURL: '/api',
   timeout: 30000,
 });
+
+const extractFilename = (contentDisposition: string | undefined, fallback: string): string => {
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const utfMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utfMatch?.[1]) {
+    return decodeURIComponent(utfMatch[1]);
+  }
+
+  const asciiMatch = contentDisposition.match(/filename="([^"]+)"/i);
+  return asciiMatch?.[1] ?? fallback;
+};
 
 export const api = {
   getDashboardStats: async (): Promise<DashboardStats> => {
@@ -94,6 +113,29 @@ export const api = {
   getCheckResult: async (checkId: string): Promise<CheckResult> => {
     const { data } = await apiClient.get<CheckResult>(`/checks/${checkId}/result`);
     return data;
+  },
+
+  downloadCheckDebugLog: async (checkId: string): Promise<DownloadResponse> => {
+    const response = await apiClient.get<Blob>(`/checks/${checkId}/debug-log`, {
+      responseType: 'blob',
+    });
+
+    return {
+      blob: response.data,
+      filename: extractFilename(response.headers['content-disposition'], `${checkId}.debug.json`),
+    };
+  },
+
+  downloadFixedDocx: async (checkId: string): Promise<DownloadResponse> => {
+    const response = await apiClient.get<Blob>(`/checks/${checkId}/fix-download`, {
+      responseType: 'blob',
+      timeout: 120000,
+    });
+
+    return {
+      blob: response.data,
+      filename: extractFilename(response.headers['content-disposition'], `${checkId}.fixed.docx`),
+    };
   },
 
   getCheck: async (checkId: string): Promise<CheckTaskResponse> => {

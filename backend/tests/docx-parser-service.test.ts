@@ -14,8 +14,9 @@ afterEach(async () => {
 });
 
 describe('parseDocxFile', () => {
-  it('extracts page layout, page numbers, and numbering metadata from a fixture docx', async () => {
+  it('extracts page layout, header text, page numbers, and numbering metadata from a fixture docx', async () => {
     const fixture = await createDocxFixture({
+      headers: ['地大高等学历继续教育', '学生姓名：论文题目'],
       includeFooterPageNumber: true,
       footerAlignment: 'center',
       numbering: [
@@ -24,7 +25,7 @@ describe('parseDocxFile', () => {
       paragraphs: [
         { text: 'Abstract', styleId: 'Heading1' },
         {
-          text: 'Keywords: parser, numbering',
+          text: 'Keywords: parser; numbering',
           fontFamily: 'Times New Roman',
           fontSizeHalfPoints: 24,
         },
@@ -42,6 +43,7 @@ describe('parseDocxFile', () => {
 
     expect(parsed.paragraphCount).toBe(3);
     expect(parsed.pageSize?.label).toBe('A4');
+    expect(parsed.headerTexts).toEqual(['地大高等学历继续教育', '学生姓名：论文题目']);
     expect(parsed.hasPageNumberField).toBe(true);
     expect(parsed.pageNumberAlignment).toBe('center');
     expect(parsed.paragraphs[0]?.headingLevel).toBe(1);

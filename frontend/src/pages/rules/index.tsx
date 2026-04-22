@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Button,
   Card,
   Col,
@@ -1269,20 +1268,12 @@ const RulesConfig: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: 1220, margin: '0 auto' }}>
+    <div data-testid="page-rules" style={{ maxWidth: 1220, margin: '0 auto' }}>
       <Card variant="borderless" title={<span style={{ fontSize: 20 }}>{currentTemplate ? '编辑模板' : '规则配置'}</span>}>
         {loading ? (
           <Skeleton active paragraph={{ rows: 16 }} />
         ) : (
           <>
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 24 }}
-              title="逐项设置规则，不需要手写组合字符串"
-              description="所有常见字段都提供“无要求”选项。标题层级支持继续添加，数值项自动限制整数或 0.5 步进。"
-            />
-
             <Form
               form={form}
               layout="vertical"

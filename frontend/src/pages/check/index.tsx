@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Upload, Select, Button, Typography, Card, Space, message, Spin, Alert } from 'antd';
 import { InboxOutlined, FileWordOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
@@ -16,8 +16,15 @@ const CheckPaper: React.FC = () => {
   const [checking, setChecking] = useState(false);
 
   const currentPaper = useAppStore((state) => state.currentPaper);
+  const currentResult = useAppStore((state) => state.currentResult);
   const setCurrentPaper = useAppStore((state) => state.setCurrentPaper);
   const setCurrentResult = useAppStore((state) => state.setCurrentResult);
+  const hasHydrated = useAppStore((state) => state.hasHydrated);
+  const restoredPaperNoticeVisible = useAppStore((state) => state.restoredPaperNoticeVisible);
+  const restoredResultNoticeVisible = useAppStore((state) => state.restoredResultNoticeVisible);
+  const dismissRestoredPaperNotice = useAppStore((state) => state.dismissRestoredPaperNotice);
+  const dismissRestoredResultNotice = useAppStore((state) => state.dismissRestoredResultNotice);
+  const clearCurrentContext = useAppStore((state) => state.clearCurrentContext);
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -44,6 +51,36 @@ const CheckPaper: React.FC = () => {
 
     void fetchTemplates();
   }, [templateIdFromUrl]);
+
+  const restoredNoticeDescription = useMemo(() => {
+    if (!hasHydrated) {
+      return '';
+    }
+
+    if (restoredPaperNoticeVisible && restoredResultNoticeVisible && currentPaper && currentResult) {
+      return `已恢复最近上传的论文“${currentPaper.filename}”以及对应检测结果。你可以继续检测，或直接回到最近结果页。`;
+    }
+
+    if (restoredPaperNoticeVisible && currentPaper) {
+      return `已恢复最近上传的论文“${currentPaper.filename}”。你可以继续使用它检测，也可以清除后重新上传。`;
+    }
+
+    if (restoredResultNoticeVisible && currentResult) {
+      return '已恢复最近一次检测结果上下文。你可以直接查看结果，也可以清除本地记录后重新开始。';
+    }
+
+    return '';
+  }, [
+    currentPaper,
+    currentResult,
+    hasHydrated,
+    restoredPaperNoticeVisible,
+    restoredResultNoticeVisible,
+  ]);
+
+  const shouldShowRestoredNotice = hasHydrated
+    && (restoredPaperNoticeVisible || restoredResultNoticeVisible)
+    && (Boolean(currentPaper) || Boolean(currentResult));
 
   const props: UploadProps = {
     name: 'file',
@@ -96,8 +133,13 @@ const CheckPaper: React.FC = () => {
     }
   };
 
+  const handleCloseRestoredNotice = () => {
+    dismissRestoredPaperNotice();
+    dismissRestoredResultNotice();
+  };
+
   return (
-    <div style={{ maxWidth: 860, margin: '0 auto' }}>
+    <div data-testid="page-check" style={{ maxWidth: 860, margin: '0 auto' }}>
       <Title level={2} style={{ marginBottom: 24 }}>
         论文格式检测
       </Title>
@@ -109,6 +151,30 @@ const CheckPaper: React.FC = () => {
         title="当前仅支持 .docx 格式"
         description="建议上传按学校模板排版后的 Word 文档，系统会根据所选模板给出位置化问题提示。"
       />
+
+      {shouldShowRestoredNotice && (
+        <Alert
+          type="warning"
+          showIcon
+          closable
+          onClose={handleCloseRestoredNotice}
+          style={{ marginBottom: 24 }}
+          title="已从本地恢复最近一次工作上下文"
+          description={restoredNoticeDescription}
+          action={(
+            <Space>
+              {currentResult && (
+                <Button size="small" type="link" onClick={() => navigate(`/result/${currentResult.id}`)}>
+                  查看最近结果
+                </Button>
+              )}
+              <Button size="small" onClick={clearCurrentContext}>
+                清除本地记录
+              </Button>
+            </Space>
+          )}
+        />
+      )}
 
       <Card variant="borderless" style={{ marginBottom: 24 }}>
         <Title level={5}>1. 上传论文</Title>
@@ -135,7 +201,7 @@ const CheckPaper: React.FC = () => {
                   </Text>
                 </div>
               </Space>
-              <Button type="link" onClick={() => setCurrentPaper(null)}>
+              <Button type="link" onClick={clearCurrentContext}>
                 重新上传
               </Button>
             </div>
@@ -163,6 +229,7 @@ const CheckPaper: React.FC = () => {
           </Spin>
         ) : (
           <Button
+            data-testid="start-check-button"
             type="primary"
             size="large"
             onClick={handleStartCheck}

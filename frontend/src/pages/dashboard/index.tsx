@@ -39,7 +39,7 @@ const Dashboard: React.FC = () => {
   }, []);
 
   return (
-    <div>
+    <div data-testid="page-dashboard">
       <Typography>
         <Title level={2}>系统概览</Title>
         <Paragraph>

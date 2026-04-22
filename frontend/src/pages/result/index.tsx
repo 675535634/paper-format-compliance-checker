@@ -43,6 +43,11 @@ const CheckResultPage: React.FC = () => {
   const storedPaper = useAppStore((state) => state.currentPaper);
   const setCurrentResult = useAppStore((state) => state.setCurrentResult);
   const setCurrentPaper = useAppStore((state) => state.setCurrentPaper);
+  const restoredPaperNoticeVisible = useAppStore((state) => state.restoredPaperNoticeVisible);
+  const restoredResultNoticeVisible = useAppStore((state) => state.restoredResultNoticeVisible);
+  const dismissRestoredPaperNotice = useAppStore((state) => state.dismissRestoredPaperNotice);
+  const dismissRestoredResultNotice = useAppStore((state) => state.dismissRestoredResultNotice);
+  const clearCurrentContext = useAppStore((state) => state.clearCurrentContext);
   const navigate = useNavigate();
   const { checkId } = useParams();
 
@@ -127,6 +132,7 @@ const CheckResultPage: React.FC = () => {
 
   const result = checkId && storedResult?.id !== checkId ? null : storedResult;
   const currentPaper = checkId && storedResult?.id !== checkId ? null : storedPaper;
+  const showRestoredNotice = Boolean(result && currentPaper && (restoredPaperNoticeVisible || restoredResultNoticeVisible));
 
   const filteredIssues = useMemo(() => {
     if (!result) {
@@ -151,40 +157,56 @@ const CheckResultPage: React.FC = () => {
     return filteredIssues.slice(start, start + CARD_PAGE_SIZE);
   }, [cardPage, filteredIssues]);
 
+  const handleCloseRestoredNotice = () => {
+    dismissRestoredPaperNotice();
+    dismissRestoredResultNotice();
+  };
+
+  const handleClearCurrentContext = () => {
+    clearCurrentContext();
+    navigate('/check');
+  };
+
   if (loading) {
     return (
-      <Card variant="borderless">
-        <Skeleton active paragraph={{ rows: 10 }} />
-      </Card>
+      <div data-testid="page-result">
+        <Card variant="borderless">
+          <Skeleton active paragraph={{ rows: 10 }} />
+        </Card>
+      </div>
     );
   }
 
   if (loadError) {
     return (
-      <Card variant="borderless">
-        <Result
-          status="error"
-          icon={<ExclamationCircleOutlined />}
-          title="结果加载失败"
-          subTitle={loadError}
-          extra={[
-            <Button key="back" onClick={() => navigate('/dashboard')}>返回概览</Button>,
-            <Button type="primary" key="retry" onClick={() => navigate(0)}>重新加载</Button>,
-          ]}
-        />
-      </Card>
+      <div data-testid="page-result">
+        <Card variant="borderless">
+          <Result
+            status="error"
+            icon={<ExclamationCircleOutlined />}
+            title="结果加载失败"
+            subTitle={loadError}
+            extra={[
+              <Button key="back" onClick={() => navigate('/dashboard')}>返回概览</Button>,
+              <Button type="primary" key="retry" onClick={() => navigate(0)}>重新加载</Button>,
+            ]}
+          />
+        </Card>
+      </div>
     );
   }
 
   if (!result || !currentPaper) {
     return (
-      <Card variant="borderless">
-        <Empty description="暂无检测结果" image={Empty.PRESENTED_IMAGE_SIMPLE}>
-          <Button type="primary" onClick={() => navigate('/check')}>
-            去检测论文
-          </Button>
-        </Empty>
-      </Card>
+      <div data-testid="page-result">
+        <Card variant="borderless">
+          <Empty data-testid="empty-result-state" description="暂无检测结果" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+            <Button type="primary" onClick={() => navigate('/check')}>
+              去检测论文
+            </Button>
+          </Empty>
+        </Card>
+      </div>
     );
   }
 
@@ -250,7 +272,24 @@ const CheckResultPage: React.FC = () => {
   ];
 
   return (
-    <div>
+    <div data-testid="page-result">
+      {showRestoredNotice && (
+        <Alert
+          type="warning"
+          showIcon
+          closable
+          onClose={handleCloseRestoredNotice}
+          style={{ marginBottom: 24 }}
+          title="当前结果来自本地恢复的最近上下文"
+          description={`已从本地恢复论文“${currentPaper.filename}”及其最近检测结果。你可以继续查看，也可以清除本地记录后重新开始。`}
+          action={(
+            <Button size="small" onClick={handleClearCurrentContext}>
+              清除本地记录
+            </Button>
+          )}
+        />
+      )}
+
       <Card variant="borderless" style={{ marginBottom: 24 }}>
         <Result
           status={result.totalIssues === 0 ? 'success' : 'warning'}
@@ -331,11 +370,11 @@ const CheckResultPage: React.FC = () => {
                     <Card
                       title={`${CATEGORY_MAP[item.category]} - ${item.location}`}
                       size="small"
-                      extra={
+                      extra={(
                         <Tag color={SEVERITY_MAP[item.severity].color} icon={SEVERITY_MAP[item.severity].icon}>
                           {SEVERITY_MAP[item.severity].text}
                         </Tag>
-                      }
+                      )}
                     >
                       <div style={{ marginBottom: 12 }}>
                         <div>

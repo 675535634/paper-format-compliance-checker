@@ -141,14 +141,15 @@ const TemplatesManage: React.FC = () => {
   ];
 
   return (
-    <div>
+    <div data-testid="page-templates">
       <Card
         variant="borderless"
         title={<span style={{ fontSize: 20 }}>模板管理</span>}
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/rules')}>
+          <Button data-testid="create-template-button" type="primary" icon={<PlusOutlined />} onClick={() => navigate('/rules')}>
             新建模板
           </Button>
+          
         }
       >
         <Paragraph type="secondary" style={{ marginTop: -4 }}>

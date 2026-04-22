@@ -36,3 +36,5 @@
 /prompts/
 /PROJECT_PLAN.md
 /*.md
+!/README.md
+!/README.zh-CN.md

@@ -1,6 +1,16 @@
 
 import axios from 'axios';
-import type { DashboardStats, RuleTemplate, CheckResult, UploadedPaper } from '../types';
+import type {
+  AuthSession,
+  AuthUser,
+  DashboardStats,
+  PublicTemplateListResult,
+  PublicTemplateSummary,
+  RuleTemplate,
+  CheckResult,
+  UploadedPaper,
+} from '../types';
+import { useAppStore } from '../store';
 
 interface CheckTaskResponse {
   id: string;
@@ -28,6 +38,15 @@ const apiClient = axios.create({
   timeout: 30000,
 });
 
+apiClient.interceptors.request.use((config) => {
+  const token = useAppStore.getState().authToken;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+
+  return config;
+});
+
 const extractFilename = (contentDisposition: string | undefined, fallback: string): string => {
   if (!contentDisposition) {
     return fallback;
@@ -43,6 +62,33 @@ const extractFilename = (contentDisposition: string | undefined, fallback: strin
 };
 
 export const api = {
+  register: async (payload: {
+    username: string;
+    email: string;
+    password: string;
+    displayName?: string;
+  }): Promise<AuthSession> => {
+    const { data } = await apiClient.post<AuthSession>('/auth/register', payload);
+    return data;
+  },
+
+  login: async (payload: {
+    identifier: string;
+    password: string;
+  }): Promise<AuthSession> => {
+    const { data } = await apiClient.post<AuthSession>('/auth/login', payload);
+    return data;
+  },
+
+  logout: async (): Promise<void> => {
+    await apiClient.post('/auth/logout');
+  },
+
+  getCurrentUser: async (): Promise<AuthUser> => {
+    const { data } = await apiClient.get<AuthUser>('/auth/me');
+    return data;
+  },
+
   getDashboardStats: async (): Promise<DashboardStats> => {
     const { data } = await apiClient.get<DashboardStats>('/dashboard/stats');
     return data;
@@ -84,6 +130,36 @@ export const api = {
 
   applyTemplate: async (id: string): Promise<RuleTemplate> => {
     const { data } = await apiClient.post<RuleTemplate>(`/templates/${id}/apply`);
+    return data;
+  },
+
+  updateTemplateVisibility: async (id: string, visibility: 'private' | 'public'): Promise<RuleTemplate> => {
+    const { data } = await apiClient.patch<RuleTemplate>(`/templates/${id}/visibility`, { visibility });
+    return data;
+  },
+
+  getPublicTemplates: async (params: {
+    page: number;
+    pageSize: number;
+    query?: string;
+    sort?: 'latest' | 'hottest' | 'favorites' | 'uses';
+  }): Promise<PublicTemplateListResult> => {
+    const { data } = await apiClient.get<PublicTemplateListResult>('/public-templates', { params });
+    return data;
+  },
+
+  getPublicTemplate: async (id: string): Promise<PublicTemplateSummary> => {
+    const { data } = await apiClient.get<PublicTemplateSummary>(`/public-templates/${id}`);
+    return data;
+  },
+
+  favoritePublicTemplate: async (id: string): Promise<PublicTemplateSummary> => {
+    const { data } = await apiClient.post<PublicTemplateSummary>(`/public-templates/${id}/favorite`);
+    return data;
+  },
+
+  unfavoritePublicTemplate: async (id: string): Promise<PublicTemplateSummary> => {
+    const { data } = await apiClient.delete<PublicTemplateSummary>(`/public-templates/${id}/favorite`);
     return data;
   },
   

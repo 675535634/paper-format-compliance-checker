@@ -2,6 +2,7 @@ export type IssueCategory = 'page' | 'body' | 'heading' | 'reference' | 'other';
 export type Severity = 'high' | 'medium' | 'low';
 export type UploadStatus = 'uploading' | 'success' | 'error';
 export type CheckStatus = 'pending' | 'checking' | 'completed' | 'failed';
+export type TemplateVisibility = 'private' | 'public';
 
 export interface PaperRuleConfig {
   pageSize: string;
@@ -21,19 +22,28 @@ export interface PaperRuleConfig {
   referenceFormat: string;
   figureCaptionRule?: string;
   tableCaptionRule?: string;
+  tocRule?: string;
 }
 
 export interface RuleTemplate {
   id: string;
+  ownerId: string;
   name: string;
   description: string;
   config: PaperRuleConfig;
   updatedAt: string;
   isDefault: boolean;
+  visibility: TemplateVisibility;
+  publishedAt?: string;
+  favoriteCount: number;
+  viewCount: number;
+  useCount: number;
+  hotScore: number;
 }
 
 export interface UploadedFileRecord {
   id: string;
+  ownerId: string;
   filename: string;
   size: number;
   mimeType: string;
@@ -56,6 +66,7 @@ export interface CheckIssue {
 
 export interface CheckTask {
   id: string;
+  userId: string;
   paperId: string;
   templateId: string;
   status: CheckStatus;
@@ -71,6 +82,7 @@ export interface CheckTask {
 
 export interface CheckResult {
   id: string;
+  userId: string;
   paperId: string;
   templateId: string;
   status: CheckStatus;
@@ -97,6 +109,7 @@ export interface RecentCheckItem {
 export interface StoredCheckResult {
   id: string;
   checkId: string;
+  userId: string;
   paperId: string;
   templateId: string;
   status: CheckStatus;
@@ -105,9 +118,64 @@ export interface StoredCheckResult {
   createdAt: string;
 }
 
+export interface UserRecord {
+  id: string;
+  username: string;
+  email: string;
+  passwordHash: string;
+  passwordSalt: string;
+  displayName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthTokenRecord {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface TemplateFavoriteRecord {
+  id: string;
+  userId: string;
+  templateId: string;
+  createdAt: string;
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  email: string;
+  displayName: string;
+  createdAt: string;
+}
+
+export interface AuthSession {
+  token: string;
+  user: AuthUser;
+  expiresAt: string;
+}
+
+export interface PublicTemplateSummary extends RuleTemplate {
+  ownerDisplayName: string;
+  isFavorited: boolean;
+}
+
+export interface PublicTemplateListResult {
+  items: PublicTemplateSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export interface DatabaseState {
+  users: UserRecord[];
+  authTokens: AuthTokenRecord[];
   uploadedFiles: UploadedFileRecord[];
   templates: RuleTemplate[];
+  templateFavorites: TemplateFavoriteRecord[];
   checks: CheckTask[];
   results: StoredCheckResult[];
 }
@@ -139,6 +207,9 @@ export interface ParsedDocxModel {
   paragraphCount: number;
   paragraphs: ParsedParagraph[];
   headerTexts: string[];
+  headerParagraphs?: ParsedParagraph[];
+  footerTexts?: string[];
+  footerParagraphs?: ParsedParagraph[];
   pageSize?: {
     widthCm: number;
     heightCm: number;

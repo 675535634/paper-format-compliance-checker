@@ -4,7 +4,7 @@ import { createId } from './id-service.js';
 import { writeCheckDebugLog, getCheckDebugLog as readCheckDebugLog } from './check-debug-log-service.js';
 import { parseDocxFile } from './docx-parser-service.js';
 import { createFixedDocumentDownload } from './docx-fix-service.js';
-import { getUploadedFileById } from './file-service.js';
+import { getUploadedFileByIdForUser } from './file-service.js';
 import { evaluateDocumentAgainstRules } from './rule-engine-service.js';
 import { resolveRuleConfig } from './template-service.js';
 import type { CreateCheckInput } from './validation-service.js';
@@ -20,6 +20,7 @@ const summarizeIssues = (result: StoredCheckResult) => ({
 
 const toApiResult = (stored: StoredCheckResult): CheckResult => ({
   id: stored.checkId,
+  userId: stored.userId,
   paperId: stored.paperId,
   templateId: stored.templateId,
   status: stored.status,
@@ -28,29 +29,32 @@ const toApiResult = (stored: StoredCheckResult): CheckResult => ({
   createdAt: stored.createdAt,
 });
 
-export const listChecks = async (): Promise<CheckTask[]> => {
+export const listChecks = async (userId: string): Promise<CheckTask[]> => {
   const db = await readDatabase();
-  return [...db.checks].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return [...db.checks]
+    .filter((check) => check.userId === userId)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 };
 
-export const getCheckById = async (id: string): Promise<CheckTask | undefined> => {
+export const getCheckById = async (id: string, userId: string): Promise<CheckTask | undefined> => {
   const db = await readDatabase();
-  return db.checks.find((check) => check.id === id);
+  return db.checks.find((check) => check.id === id && check.userId === userId);
 };
 
-export const getCheckResult = async (checkId: string): Promise<CheckResult | undefined> => {
+export const getCheckResult = async (checkId: string, userId: string): Promise<CheckResult | undefined> => {
   const db = await readDatabase();
-  const result = db.results.find((item) => item.checkId === checkId);
+  const result = db.results.find((item) => item.checkId === checkId && item.userId === userId);
   return result ? toApiResult(result) : undefined;
 };
 
 export const getCheckDebugLog = async (checkId: string): Promise<string | undefined> =>
   readCheckDebugLog(checkId);
 
-const persistPendingCheck = async (input: { paperId: string; templateId: string }): Promise<CheckTask> =>
+const persistPendingCheck = async (input: { userId: string; paperId: string; templateId: string }): Promise<CheckTask> =>
   updateDatabase((state) => {
     const check: CheckTask = {
       id: createId('check'),
+      userId: input.userId,
       paperId: input.paperId,
       templateId: input.templateId,
       status: 'pending',
@@ -114,16 +118,22 @@ const completeCheck = async (checkId: string, result: StoredCheckResult): Promis
   }));
 };
 
-const executeCheck = async (checkId: string, paperId: string, templateId?: string, inlineRuleConfig?: CreateCheckInput['inlineRuleConfig']): Promise<void> => {
+const executeCheck = async (
+  userId: string,
+  checkId: string,
+  paperId: string,
+  templateId?: string,
+  inlineRuleConfig?: CreateCheckInput['inlineRuleConfig']
+): Promise<void> => {
   await markCheckRunning(checkId);
 
   try {
-    const uploadedFile = await getUploadedFileById(paperId);
+    const uploadedFile = await getUploadedFileByIdForUser(paperId, userId);
     if (!uploadedFile) {
       throw new Error(`Uploaded file ${paperId} was not found.`);
     }
 
-    const resolvedRuleSet = await resolveRuleConfig(templateId, inlineRuleConfig);
+    const resolvedRuleSet = await resolveRuleConfig(userId, templateId, inlineRuleConfig);
     const parsedDocument = await parseDocxFile(uploadedFile.storagePath);
     const issues = evaluateDocumentAgainstRules(parsedDocument, resolvedRuleSet.config);
 
@@ -138,6 +148,7 @@ const executeCheck = async (checkId: string, paperId: string, templateId?: strin
     const storedResult: StoredCheckResult = {
       id: createId('result'),
       checkId,
+      userId,
       paperId,
       templateId: resolvedRuleSet.templateId,
       status: 'completed',
@@ -154,15 +165,16 @@ const executeCheck = async (checkId: string, paperId: string, templateId?: strin
   }
 };
 
-export const createCheck = async (input: CreateCheckInput): Promise<CheckTask> => {
-  const resolvedRuleSet = await resolveRuleConfig(input.templateId, input.inlineRuleConfig);
+export const createCheck = async (userId: string, input: CreateCheckInput): Promise<CheckTask> => {
+  const resolvedRuleSet = await resolveRuleConfig(userId, input.templateId, input.inlineRuleConfig);
   const check = await persistPendingCheck({
+    userId,
     paperId: input.fileId,
     templateId: resolvedRuleSet.templateId,
   });
 
-  await executeCheck(check.id, input.fileId, input.templateId, input.inlineRuleConfig);
-  const finalCheck = await getCheckById(check.id);
+  await executeCheck(userId, check.id, input.fileId, input.templateId, input.inlineRuleConfig);
+  const finalCheck = await getCheckById(check.id, userId);
 
   if (!finalCheck) {
     throw new Error(`Check ${check.id} was not found after execution.`);
@@ -171,31 +183,31 @@ export const createCheck = async (input: CreateCheckInput): Promise<CheckTask> =
   return finalCheck;
 };
 
-export const retryCheck = async (checkId: string): Promise<CheckTask | undefined> => {
-  const existing = await getCheckById(checkId);
+export const retryCheck = async (userId: string, checkId: string): Promise<CheckTask | undefined> => {
+  const existing = await getCheckById(checkId, userId);
   if (!existing) {
     return undefined;
   }
 
-  await executeCheck(checkId, existing.paperId, existing.templateId);
-  return getCheckById(checkId);
+  await executeCheck(userId, checkId, existing.paperId, existing.templateId);
+  return getCheckById(checkId, userId);
 };
 
-export const createFixedDocumentForCheck = async (checkId: string): Promise<{
+export const createFixedDocumentForCheck = async (userId: string, checkId: string): Promise<{
   buffer: Buffer;
   filename: string;
 }> => {
-  const check = await getCheckById(checkId);
+  const check = await getCheckById(checkId, userId);
   if (!check) {
     throw new Error(`Check ${checkId} was not found.`);
   }
 
-  const uploadedFile = await getUploadedFileById(check.paperId);
+  const uploadedFile = await getUploadedFileByIdForUser(check.paperId, userId);
   if (!uploadedFile) {
     throw new Error(`Uploaded file ${check.paperId} was not found.`);
   }
 
-  const resolvedRuleSet = await resolveRuleConfig(check.templateId);
+  const resolvedRuleSet = await resolveRuleConfig(userId, check.templateId);
   const parsedDocument = await parseDocxFile(uploadedFile.storagePath);
 
   return createFixedDocumentDownload({

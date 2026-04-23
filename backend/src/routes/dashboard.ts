@@ -3,10 +3,10 @@ import { getDashboardStats, getRecentChecks } from '../services/dashboard-servic
 
 export const dashboardRouter = Router();
 
-dashboardRouter.get('/stats', async (_request, response) => {
-  response.json(await getDashboardStats());
+dashboardRouter.get('/stats', async (request, response) => {
+  response.json(await getDashboardStats(request.currentUser!.id));
 });
 
-dashboardRouter.get('/recent-checks', async (_request, response) => {
-  response.json(await getRecentChecks());
+dashboardRouter.get('/recent-checks', async (request, response) => {
+  response.json(await getRecentChecks(request.currentUser!.id));
 });

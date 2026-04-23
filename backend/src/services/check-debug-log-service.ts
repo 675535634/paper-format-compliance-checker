@@ -16,8 +16,8 @@ const buildSectionSignals = (parsedDocument: ParsedDocxModel) => {
   const includesAny = (patterns: RegExp[]): boolean => paragraphTexts.some((text) => patterns.some((pattern) => pattern.test(text)));
 
   return {
-    abstractDetected: includesAny([/^(摘要|abstract)$/i]),
-    keywordsDetected: includesAny([/(关键词|keywords?)/i]),
+    abstractDetected: includesAny([/^(摘\s*要|摘要|abstract)$/i]),
+    keywordsDetected: includesAny([/(关\s*键\s*词|keywords?)/i]),
     referencesDetected: includesAny([/^(参考文献|references)$/i]),
     originalityDetected: includesAny([/(原创性声明|毕业论文原创性声明)/]),
     acknowledgementDetected: includesAny([/^(致谢|谢辞|acknowledg)/i]),

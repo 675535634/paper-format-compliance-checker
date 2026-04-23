@@ -1,106 +1,120 @@
-import type { DashboardStats, RuleTemplate, CheckResult, CheckIssue } from '../types';
+import type { CheckIssue, CheckResult, DashboardStats, RuleTemplate } from '../types';
 
 export const mockDashboardStats: DashboardStats = {
   totalTemplates: 5,
   recentCheckCount: 24,
   lastCheckTime: '2026-04-21 14:30:00',
-  pendingFixIssues: 12
+  pendingFixIssues: 12,
 };
 
 export const mockTemplates: RuleTemplate[] = [
   {
     id: 't1',
-    name: '本科毕业论文默认模板',
-    description: '适用于2026届本科生毕业论文的格式标准',
+    ownerId: 'user_mock',
+    name: 'Default Undergraduate Template',
+    description: 'A starter template for undergraduate theses.',
     config: {
       pageSize: 'A4',
-      margin: '上 2.5cm, 下 2.5cm, 左 3cm, 右 2.5cm',
-      bodyFont: '宋体',
-      bodyFontSize: '小四',
+      margin: 'Top 2.5cm, Bottom 2.5cm, Left 3cm, Right 2.5cm',
+      bodyFont: 'SimSun',
+      bodyFontSize: 'Small No. 4',
       lineHeight: 1.5,
-      paragraphSpacing: '段前0行, 段后0行',
-      firstLineIndent: '2字符',
-      headingFormats: '一级标题 黑体三号; 二级标题 黑体四号',
-      pageNumberRule: '底部居中，阿拉伯数字',
-      abstractFormat: '黑体小四，行距1.5',
-      keywordFormat: '黑体小四',
-      referenceFormat: 'GB/T 7714-2015'
+      paragraphSpacing: 'Before 0pt, After 0pt',
+      firstLineIndent: '2 chars',
+      headingFormats: 'Level 1: SimHei No. 3; Level 2: SimHei No. 4',
+      pageNumberRule: 'Bottom center Arabic numerals',
+      abstractFormat: 'Bold title, 1.5 line spacing',
+      keywordFormat: 'Keywords in bold',
+      referenceFormat: 'GB/T 7714-2015',
     },
     updatedAt: '2026-04-20 10:00:00',
-    isDefault: true
+    isDefault: true,
+    visibility: 'private',
+    favoriteCount: 2,
+    viewCount: 8,
+    useCount: 6,
+    hotScore: 36,
   },
   {
     id: 't2',
-    name: '硕士学位论文模板',
-    description: '硕士研究生学位论文格式要求',
+    ownerId: 'user_mock',
+    name: 'Research Thesis Template',
+    description: 'A stricter research-oriented thesis template.',
     config: {
       pageSize: 'A4',
-      margin: '上 3cm, 下 2.5cm, 左 3cm, 右 2.5cm',
-      bodyFont: '宋体',
-      bodyFontSize: '小四',
-      lineHeight: 20, // 固定值20磅
-      paragraphSpacing: '段前0.5行, 段后0.5行',
-      firstLineIndent: '2字符',
-      headingFormats: '一级 黑体三号; 二级 黑体四号; 三级 黑体小四',
-      pageNumberRule: '底部居中',
-      abstractFormat: '黑体小四',
-      keywordFormat: '黑体小四',
-      referenceFormat: 'GB/T 7714-2015'
+      margin: 'Top 3cm, Bottom 2.5cm, Left 3cm, Right 2.5cm',
+      bodyFont: 'SimSun',
+      bodyFontSize: 'Small No. 4',
+      lineHeight: 20,
+      paragraphSpacing: 'Before 6pt, After 6pt',
+      firstLineIndent: '2 chars',
+      headingFormats: 'Level 1: SimHei No. 3; Level 2: SimHei No. 4; Level 3: SimHei Small No. 4',
+      pageNumberRule: 'Bottom center',
+      abstractFormat: 'Bold title, fixed 20pt line spacing',
+      keywordFormat: 'Bold keyword label',
+      referenceFormat: 'GB/T 7714-2015',
     },
     updatedAt: '2026-04-15 14:20:00',
-    isDefault: false
-  }
+    isDefault: false,
+    visibility: 'public',
+    publishedAt: '2026-04-16 08:00:00',
+    favoriteCount: 10,
+    viewCount: 20,
+    useCount: 15,
+    hotScore: 115,
+  },
 ];
 
 export const mockIssues: CheckIssue[] = [
   {
     id: 'i1',
     category: 'page',
-    location: '全局页面设置',
-    currentValue: '左边距 2.5cm',
-    expectedValue: '左边距 3cm',
-    reason: '未满足装订线要求',
-    suggestion: '在页面设置中将左边距修改为 3cm',
-    severity: 'high'
+    location: 'Global page setup',
+    currentValue: 'Left margin 2.5cm',
+    expectedValue: 'Left margin 3cm',
+    reason: 'The binding-side margin is smaller than required.',
+    suggestion: 'Change the left margin to 3cm in page setup.',
+    severity: 'high',
   },
   {
     id: 'i2',
     category: 'body',
-    location: '第 3 页第 2 段',
-    currentValue: '行距 1.15倍',
-    expectedValue: '行距 1.5倍',
-    reason: '正文行距过密',
-    suggestion: '选中文段，段落设置行距为 1.5倍',
-    severity: 'medium'
+    location: 'Page 3 paragraph 2',
+    currentValue: 'Line spacing 1.15',
+    expectedValue: 'Line spacing 1.5',
+    reason: 'The body text line spacing is too tight.',
+    suggestion: 'Update the paragraph line spacing to 1.5.',
+    severity: 'medium',
   },
   {
     id: 'i3',
     category: 'heading',
-    location: '一级标题 "2 相关技术介绍"',
-    currentValue: '宋体 三号',
-    expectedValue: '黑体 三号',
-    reason: '一级标题字体错误',
-    suggestion: '修改标题字体为黑体',
-    severity: 'high'
+    location: 'Heading 1: Related Work',
+    currentValue: 'SimSun No. 3',
+    expectedValue: 'SimHei No. 3',
+    reason: 'The heading font does not match the template.',
+    suggestion: 'Change the heading font to SimHei.',
+    severity: 'high',
   },
   {
     id: 'i4',
     category: 'reference',
-    location: '参考文献 [1]',
-    currentValue: '作者名后缺少年份',
-    expectedValue: '作者. 文章名[J]. 期刊名, 年份.',
-    reason: '不符合 GB/T 7714-2015 标准',
-    suggestion: '补充年份信息',
-    severity: 'low'
-  }
+    location: 'Reference [1]',
+    currentValue: 'Missing publication year',
+    expectedValue: 'Author. Title[J]. Journal, Year.',
+    reason: 'The entry is not aligned with GB/T 7714-2015.',
+    suggestion: 'Add the missing publication year.',
+    severity: 'low',
+  },
 ];
 
 export const mockCheckResult: CheckResult = {
   id: 'r1',
+  userId: 'user_mock',
   paperId: 'p1',
   templateId: 't1',
   status: 'completed',
   totalIssues: mockIssues.length,
   issues: mockIssues,
-  createdAt: '2026-04-21 15:00:00'
+  createdAt: '2026-04-21 15:00:00',
 };

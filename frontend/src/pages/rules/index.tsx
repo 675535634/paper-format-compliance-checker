@@ -3,8 +3,8 @@ import {
   Button,
   Card,
   Col,
-  Divider,
   Form,
+  Tabs,
   type FormInstance,
   Input,
   InputNumber,
@@ -18,6 +18,7 @@ import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { PaperRuleConfig, RuleTemplate } from '../../types';
+import { useI18n } from '../../i18n';
 
 type NamePath = Array<string | number>;
 type FontMode = 'none' | 'preset' | 'custom';
@@ -76,6 +77,26 @@ interface HeadingRuleFormValue {
   indent: IndentValue;
 }
 
+interface ParagraphStyleFormValue {
+  font: FontChoiceValue;
+  size: SizeChoiceValue;
+  alignment: AlignmentOption;
+  lineHeight: LineHeightValue;
+  spacing: SpacingValue;
+  indent: IndentValue;
+}
+
+interface CaptionFormValue extends ParagraphStyleFormValue {
+  mode: CaptionMode;
+  position: 'above' | 'below';
+}
+
+interface TocFormValue {
+  mode: 'none' | 'custom';
+  title: ParagraphStyleFormValue;
+  body: ParagraphStyleFormValue;
+}
+
 interface RuleFormValues {
   templateName: string;
   description: string;
@@ -92,12 +113,14 @@ interface RuleFormValues {
     preset: HeaderPreset;
     oddText: string;
     evenText: string;
+    style: ParagraphStyleFormValue;
   };
   pageNumber: {
     mode: PageNumberMode;
     position: PagePosition;
     alignment: AlignmentOption;
     style: NumberStyle;
+    textStyle: ParagraphStyleFormValue;
   };
   body: {
     font: FontChoiceValue;
@@ -113,9 +136,12 @@ interface RuleFormValues {
     titleFont: FontChoiceValue;
     titleSize: SizeChoiceValue;
     titleAlignment: AlignmentOption;
+    titleLineHeight: LineHeightValue;
+    titleSpacing: SpacingValue;
     bodyFont: FontChoiceValue;
     bodySize: SizeChoiceValue;
     lineHeight: LineHeightValue;
+    bodySpacing: SpacingValue;
     lengthMode: 'none' | 'custom';
     minLength: number;
     maxLength: number;
@@ -133,14 +159,9 @@ interface RuleFormValues {
     preset: ReferencePreset;
     custom: string;
   };
-  figureCaption: {
-    mode: CaptionMode;
-    position: 'above' | 'below';
-  };
-  tableCaption: {
-    mode: CaptionMode;
-    position: 'above' | 'below';
-  };
+  figureCaption: CaptionFormValue;
+  tableCaption: CaptionFormValue;
+  toc: TocFormValue;
 }
 
 const NO_REQUIREMENT = '无要求';
@@ -148,14 +169,291 @@ const TEMPLATE_NAME_DEFAULT = '地大论文检查模板';
 const COMMON_FONTS = ['宋体', '黑体', '楷体', '仿宋', '仿宋_GB2312', 'Times New Roman'];
 const NAMED_FONT_SIZES = ['初号', '小初', '一号', '小一', '二号', '小二', '三号', '小三', '四号', '小四', '五号', '小五'];
 const REFERENCE_OPTIONS: ReferencePreset[] = ['GB/T 7714-2005', 'GB/T 7714-2015', 'APA', 'MLA', 'IEEE'];
-const COVER_ITEM_OPTIONS = ['论文题目', '教学点名称', '学号', '学生姓名', '学科专业', '指导教师', '评阅教师'];
-const REQUIRED_SECTION_OPTIONS = ['毕业论文原创性声明', '摘要', '目录', '致谢', '参考文献', '附录'];
-const HEADER_PRESET_OPTIONS: Array<{ label: string; value: HeaderPreset; oddText: string; evenText: string }> = [
-  { label: '无要求', value: 'none', oddText: '', evenText: '' },
-  { label: '地大成教默认页眉', value: 'geoscienceDefault', oddText: '地大高等学历继续教育', evenText: '学生姓名：论文题目' },
-  { label: '奇偶页都显示学校名称', value: 'sameSchoolName', oddText: '地大高等学历继续教育', evenText: '地大高等学历继续教育' },
-  { label: '自定义页眉', value: 'custom', oddText: '', evenText: '' },
+const COVER_ITEM_OPTIONS = ['论文题目', '教学点名称', '学号', '学生姓名', '学科专业', '指导教师', '评阅教师', '完成时间'];
+const REQUIRED_SECTION_OPTIONS = ['毕业论文原创性声明', '摘要', '目录', '图清单', '表清单', '致谢', '参考文献', '附录', '指导教师指导意见表', '评阅教师评阅意见表'];
+const HEADER_PRESET_OPTIONS: Array<{ value: HeaderPreset; oddText: string; evenText: string }> = [
+  { value: 'none', oddText: '', evenText: '' },
+  { value: 'geoscienceDefault', oddText: '地大高等学历继续教育', evenText: '学生姓名：论文题目' },
+  { value: 'sameSchoolName', oddText: '地大高等学历继续教育', evenText: '地大高等学历继续教育' },
+  { value: 'custom', oddText: '', evenText: '' },
 ];
+
+const FONT_DISPLAY_LABELS: Record<string, string> = {
+  宋体: 'SimSun (宋体)',
+  黑体: 'SimHei (黑体)',
+  楷体: 'KaiTi (楷体)',
+  仿宋: 'FangSong (仿宋)',
+  仿宋_GB2312: 'FangSong GB2312 (仿宋_GB2312)',
+  'Times New Roman': 'Times New Roman',
+};
+
+const NAMED_SIZE_DISPLAY_LABELS: Record<string, string> = {
+  初号: 'Chuhao (初号)',
+  小初: 'Small Chuhao (小初)',
+  一号: 'No. 1 (一号)',
+  小一: 'Small No. 1 (小一)',
+  二号: 'No. 2 (二号)',
+  小二: 'Small No. 2 (小二)',
+  三号: 'No. 3 (三号)',
+  小三: 'Small No. 3 (小三)',
+  四号: 'No. 4 (四号)',
+  小四: 'Small No. 4 (小四)',
+  五号: 'No. 5 (五号)',
+  小五: 'Small No. 5 (小五)',
+};
+
+const COVER_ITEM_DISPLAY_LABELS: Record<string, string> = {
+  论文题目: 'Paper Title',
+  教学点名称: 'Teaching Center',
+  学号: 'Student ID',
+  学生姓名: 'Student Name',
+  学科专业: 'Major',
+  指导教师: 'Supervisor',
+  评阅教师: 'Reviewer',
+  完成时间: 'Completion Date',
+};
+
+const REQUIRED_SECTION_DISPLAY_LABELS: Record<string, string> = {
+  毕业论文原创性声明: 'Originality Statement',
+  摘要: 'Abstract',
+  目录: 'Table of Contents',
+  图清单: 'List of Figures',
+  表清单: 'List of Tables',
+  致谢: 'Acknowledgements',
+  参考文献: 'References',
+  附录: 'Appendix',
+  指导教师指导意见表: 'Supervisor Review Form',
+  评阅教师评阅意见表: 'Reviewer Evaluation Form',
+};
+
+const getRulesCopy = (isEnglish: boolean) => isEnglish
+  ? {
+      defaultTemplateName: 'CUG Thesis Checker Template',
+      pageTitleCreate: 'Rule Settings',
+      pageTitleEdit: 'Edit Template',
+      templateName: 'Template Name',
+      templateDescription: 'Description',
+      templateNamePlaceholder: 'For example: CUG undergraduate thesis template',
+      templateDescriptionPlaceholder: 'Describe which thesis type this rule set applies to',
+      sectionPage: 'Page, Header, and Page Number',
+      sectionBody: 'Body Text',
+      sectionStructure: 'Structure and Sections',
+      sectionHeading: 'Heading Levels',
+      sectionAbstract: 'Abstract and Keywords',
+      sectionReference: 'References, Captions, and TOC',
+      paperSize: 'Paper Size',
+      margin: 'Margins',
+      headerPreset: 'Header Preset',
+      oddHeader: 'Odd-Page Header',
+      evenHeader: 'Even-Page Header',
+      headerStyle: 'Header Text Style',
+      pageNumberRule: 'Page Number Rule',
+      pageNumberPosition: 'Page Number Position',
+      pageNumberAlignment: 'Page Number Alignment',
+      pageNumberStyle: 'Page Number Style',
+      footerStyle: 'Footer Text Style',
+      bodyFont: 'Body Font',
+      bodySize: 'Body Font Size',
+      lineHeight: 'Line Height',
+      spacing: 'Paragraph Spacing',
+      indent: 'First-Line Indent',
+      coverItems: 'Cover Fields',
+      coverItemsPlaceholder: 'Select or add cover fields to check',
+      requiredSections: 'Required Sections',
+      requiredSectionsPlaceholder: 'Select or add required sections',
+      addHeading: 'Add Heading Level',
+      addHeadingHint: 'Add level-4, level-5, and deeper heading rules as needed.',
+      headingLevelTitle: 'Heading Level',
+      delete: 'Delete',
+      level: 'Level',
+      abstractTitle: 'Abstract Title',
+      abstractBody: 'Abstract Body',
+      abstractLength: 'Word Count Range',
+      keywords: 'Keywords',
+      keywordSeparator: 'Separator',
+      keywordLabelStyle: 'Keyword Label Style',
+      keywordCount: 'Keyword Count',
+      referenceFormat: 'Reference Format',
+      figureCaption: 'Figure Caption',
+      tableCaption: 'Table Caption',
+      toc: 'Table of Contents',
+      tocTitle: 'TOC Title',
+      tocBody: 'TOC Entries',
+      checkMode: 'Check Mode',
+      font: 'Font',
+      size: 'Font Size',
+      alignment: 'Alignment',
+      position: 'Position',
+      fixedValue: 'Fixed',
+      multiple: 'Multiple',
+      noRequirement: 'No Requirement',
+      commonFonts: 'Common Fonts',
+      commonSizes: 'Named Sizes',
+      custom: 'Custom',
+      customFontPlaceholder: 'Enter a font name',
+      before: 'Before',
+      after: 'After',
+      character: 'chars',
+      left: 'Left',
+      center: 'Center',
+      right: 'Right',
+      top: 'Top',
+      bottom: 'Bottom',
+      arabic: 'Arabic',
+      romanLower: 'Roman Lower',
+      romanUpper: 'Roman Upper',
+      chineseNumber: 'Chinese Numerals',
+      semicolon: 'Semicolon',
+      comma: 'Comma',
+      dunhao: 'Dunhao',
+      bold: 'Bold',
+      normal: 'Normal',
+      customHeader: 'Custom Header',
+      geoscienceDefault: 'CUG Continuing Education Header',
+      sameSchoolName: 'School Name on Both Pages',
+      leftAlign: 'Align Left',
+      centerAlign: 'Center',
+      rightAlign: 'Align Right',
+      customReferencePlaceholder: 'Enter a reference style name',
+      currentNone: 'Currently set to no requirement',
+      currentPreset: 'A common reference style is selected',
+      saveCreate: 'Save Template',
+      saveEdit: 'Save Changes',
+      resetCreate: 'Reset to Default',
+      resetEdit: 'Restore Template',
+      loadTemplateFailed: 'Failed to load the template.',
+      duplicateHeadingLevel: (level: number) => `Heading level ${level} is duplicated. Please adjust it before saving.`,
+      abstractRangeInvalid: 'The abstract word-count range is invalid. The minimum cannot be greater than the maximum.',
+      keywordsRangeInvalid: 'The keyword-count range is invalid. The minimum cannot be greater than the maximum.',
+      saveCreateSuccess: 'Template saved.',
+      saveEditSuccess: 'Template updated.',
+      saveFailed: 'Failed to save the template.',
+    }
+  : {
+      defaultTemplateName: TEMPLATE_NAME_DEFAULT,
+      pageTitleCreate: '规则配置',
+      pageTitleEdit: '编辑模板',
+      templateName: '模板名称',
+      templateDescription: '模板说明',
+      templateNamePlaceholder: '例如：地大本科毕业论文模板',
+      templateDescriptionPlaceholder: '说明这套规则适用的论文类型',
+      sectionPage: '页面与页眉页码',
+      sectionBody: '正文格式',
+      sectionStructure: '结构与章节',
+      sectionHeading: '标题层级',
+      sectionAbstract: '摘要与关键词',
+      sectionReference: '参考文献、图表题注与目录',
+      paperSize: '纸张规格',
+      margin: '页边距',
+      headerPreset: '页眉方案',
+      oddHeader: '奇数页页眉',
+      evenHeader: '偶数页页眉',
+      headerStyle: '页眉文字样式',
+      pageNumberRule: '页码要求',
+      pageNumberPosition: '页码位置',
+      pageNumberAlignment: '页码对齐',
+      pageNumberStyle: '页码样式',
+      footerStyle: '页脚文字样式',
+      bodyFont: '正文字体',
+      bodySize: '正文字号',
+      lineHeight: '行距',
+      spacing: '段前段后',
+      indent: '首行缩进',
+      coverItems: '封面字段',
+      coverItemsPlaceholder: '选择或补充需要检查的封面字段',
+      requiredSections: '必需章节',
+      requiredSectionsPlaceholder: '选择或补充必需章节',
+      addHeading: '添加标题层级',
+      addHeadingHint: '可继续添加 4 级、5 级等标题规则',
+      headingLevelTitle: '标题层级',
+      delete: '删除',
+      level: '级别',
+      abstractTitle: '摘要标题',
+      abstractBody: '摘要正文',
+      abstractLength: '字数范围',
+      keywords: '关键词',
+      keywordSeparator: '分隔符',
+      keywordLabelStyle: '关键词标题样式',
+      keywordCount: '关键词数量',
+      referenceFormat: '参考文献格式',
+      figureCaption: '图题注',
+      tableCaption: '表题注',
+      toc: '目录',
+      tocTitle: '目录标题',
+      tocBody: '目录正文',
+      checkMode: '检查方式',
+      font: '字体',
+      size: '字号',
+      alignment: '对齐方式',
+      position: '位置',
+      fixedValue: '固定值',
+      multiple: '倍数',
+      noRequirement: '无要求',
+      commonFonts: '常用字体',
+      commonSizes: '常用字号',
+      custom: '自定义',
+      customFontPlaceholder: '输入字体名称',
+      before: '段前',
+      after: '段后',
+      character: '字符',
+      left: '居左',
+      center: '居中',
+      right: '居右',
+      top: '顶部',
+      bottom: '底部',
+      arabic: '阿拉伯数字',
+      romanLower: '小写罗马数字',
+      romanUpper: '大写罗马数字',
+      chineseNumber: '中文数字',
+      semicolon: '分号',
+      comma: '逗号',
+      dunhao: '顿号',
+      bold: '加粗',
+      normal: '常规',
+      customHeader: '自定义页眉',
+      geoscienceDefault: '地大成教默认页眉',
+      sameSchoolName: '奇偶页都显示学校名称',
+      leftAlign: '居左',
+      centerAlign: '居中',
+      rightAlign: '居右',
+      customReferencePlaceholder: '输入参考文献规范名称',
+      currentNone: '当前为无要求',
+      currentPreset: '已选择常用规范',
+      saveCreate: '保存为模板',
+      saveEdit: '保存修改',
+      resetCreate: '恢复默认值',
+      resetEdit: '恢复当前模板',
+      loadTemplateFailed: '加载模板失败',
+      duplicateHeadingLevel: (level: number) => `标题层级 ${level} 重复了，请调整后再保存`,
+      abstractRangeInvalid: '摘要字数范围设置有误，最少字数不能大于最多字数',
+      keywordsRangeInvalid: '关键词数量范围设置有误，最少数量不能大于最多数量',
+      saveCreateSuccess: '模板保存成功',
+      saveEditSuccess: '模板更新成功',
+      saveFailed: '模板保存失败',
+    };
+
+type RulesCopy = ReturnType<typeof getRulesCopy>;
+
+const getDisplayLabel = (
+  value: string,
+  isEnglish: boolean,
+  displayMap: Record<string, string>
+): string => (isEnglish ? displayMap[value] ?? value : value);
+
+const getHeaderPresetLabel = (value: HeaderPreset, copy: RulesCopy): string => {
+  switch (value) {
+    case 'none':
+      return copy.noRequirement;
+    case 'geoscienceDefault':
+      return copy.geoscienceDefault;
+    case 'sameSchoolName':
+      return copy.sameSchoolName;
+    case 'custom':
+      return copy.customHeader;
+    default:
+      return value;
+  }
+};
 
 const defaultFontChoice = (font = '宋体'): FontChoiceValue => ({
   mode: 'preset',
@@ -231,12 +529,30 @@ const createHeadingRule = (level: number, namedSize = '小四'): HeadingRuleForm
   indent: noRequirementIndent(),
 });
 
+const createParagraphStyle = (options?: Partial<ParagraphStyleFormValue>): ParagraphStyleFormValue => ({
+  font: options?.font ?? noRequirementFontChoice(),
+  size: options?.size ?? noRequirementSizeChoice(),
+  alignment: options?.alignment ?? 'none',
+  lineHeight: options?.lineHeight ?? noRequirementLineHeight(),
+  spacing: options?.spacing ?? noRequirementSpacing(),
+  indent: options?.indent ?? noRequirementIndent(),
+});
+
+const createCaptionRule = (
+  position: 'above' | 'below',
+  options?: Partial<Omit<CaptionFormValue, 'mode' | 'position'>>
+): CaptionFormValue => ({
+  mode: 'custom',
+  position,
+  ...createParagraphStyle(options),
+});
+
 const defaultRules: PaperRuleConfig = {
   pageSize: 'A4',
   margin: '上3cm，下3cm，左3cm，右3cm',
   headerRule: '奇数页：地大高等学历继续教育；偶数页：学生姓名：论文题目',
-  coverItems: '论文题目; 教学点名称; 学号; 学生姓名; 学科专业; 指导教师; 评阅教师',
-  requiredSections: '毕业论文原创性声明; 致谢',
+  coverItems: '论文题目; 教学点名称; 学号; 学生姓名; 学科专业; 指导教师; 评阅教师; 完成时间',
+  requiredSections: '毕业论文原创性声明; 目录; 致谢; 指导教师指导意见表; 评阅教师评阅意见表',
   bodyFont: '宋体',
   bodyFontSize: '小四',
   lineHeight: '20pt',
@@ -247,12 +563,13 @@ const defaultRules: PaperRuleConfig = {
   abstractFormat: '摘要标题黑体小二居中；正文宋体小四，固定值20磅；300-500字',
   keywordFormat: '关键词三字加粗；宋体小四；3-5个，词间用分号分隔',
   referenceFormat: 'GB/T 7714-2005',
-  figureCaptionRule: '图题注格式：图1.1 标题，题注位于图下方',
-  tableCaptionRule: '表题注格式：表1.1 标题，题注位于表上方',
+  figureCaptionRule: '图题注|位置=下方|对齐=居中|字体=宋体|字号=五号|行距=无要求|段前=0pt|段后=0pt|首行缩进=无要求',
+  tableCaptionRule: '表题注|位置=上方|对齐=居中|字体=宋体|字号=五号|行距=无要求|段前=0pt|段后=0pt|首行缩进=无要求',
+  tocRule: '目录标题|字体=黑体|字号=小二|对齐=居中|行距=无要求|段前=12pt|段后=12pt|首行缩进=无要求；目录正文|字体=宋体|字号=小四|对齐=无要求|行距=20pt|段前=0pt|段后=0pt|首行缩进=无要求',
 };
 
-const defaultFormValues = (): RuleFormValues => ({
-  templateName: TEMPLATE_NAME_DEFAULT,
+const defaultFormValues = (templateNameDefault = TEMPLATE_NAME_DEFAULT): RuleFormValues => ({
+  templateName: templateNameDefault,
   description: '',
   pageSize: 'A4',
   margin: {
@@ -267,12 +584,14 @@ const defaultFormValues = (): RuleFormValues => ({
     preset: 'geoscienceDefault',
     oddText: '地大高等学历继续教育',
     evenText: '学生姓名：论文题目',
+    style: createParagraphStyle(),
   },
   pageNumber: {
     mode: 'custom',
     position: 'bottom',
     alignment: 'center',
     style: 'arabic',
+    textStyle: createParagraphStyle(),
   },
   body: {
     font: defaultFontChoice('宋体'),
@@ -282,7 +601,7 @@ const defaultFormValues = (): RuleFormValues => ({
     indent: defaultIndent(),
   },
   coverItems: [...COVER_ITEM_OPTIONS],
-  requiredSections: ['毕业论文原创性声明', '致谢'],
+  requiredSections: ['毕业论文原创性声明', '目录', '致谢', '指导教师指导意见表', '评阅教师评阅意见表'],
   headingRules: [
     createHeadingRule(1, '三号'),
     createHeadingRule(2, '四号'),
@@ -292,6 +611,8 @@ const defaultFormValues = (): RuleFormValues => ({
     titleFont: defaultFontChoice('黑体'),
     titleSize: defaultSizeChoice('小二'),
     titleAlignment: 'center',
+    titleLineHeight: noRequirementLineHeight(),
+    titleSpacing: noRequirementSpacing(),
     bodyFont: defaultFontChoice('宋体'),
     bodySize: defaultSizeChoice('小四'),
     lineHeight: {
@@ -299,6 +620,7 @@ const defaultFormValues = (): RuleFormValues => ({
       value: 20,
       unit: '磅',
     },
+    bodySpacing: defaultSpacing(),
     lengthMode: 'custom',
     minLength: 300,
     maxLength: 500,
@@ -316,13 +638,37 @@ const defaultFormValues = (): RuleFormValues => ({
     preset: 'GB/T 7714-2005',
     custom: '',
   },
-  figureCaption: {
+  figureCaption: createCaptionRule('below', {
+    font: defaultFontChoice('宋体'),
+    size: defaultSizeChoice('五号'),
+    alignment: 'center',
+    spacing: defaultSpacing(),
+  }),
+  tableCaption: createCaptionRule('above', {
+    font: defaultFontChoice('宋体'),
+    size: defaultSizeChoice('五号'),
+    alignment: 'center',
+    spacing: defaultSpacing(),
+  }),
+  toc: {
     mode: 'custom',
-    position: 'below',
-  },
-  tableCaption: {
-    mode: 'custom',
-    position: 'above',
+    title: createParagraphStyle({
+      font: defaultFontChoice('黑体'),
+      size: defaultSizeChoice('小二'),
+      alignment: 'center',
+      spacing: {
+        mode: 'custom',
+        before: 12,
+        after: 12,
+        unit: 'pt',
+      },
+    }),
+    body: createParagraphStyle({
+      font: defaultFontChoice('宋体'),
+      size: defaultSizeChoice('小四'),
+      lineHeight: defaultLineHeight(),
+      spacing: defaultSpacing(),
+    }),
   },
 });
 
@@ -347,7 +693,8 @@ const toInteger = (value: string | number | null | undefined): number => {
   const parsed = Number.parseInt(normalized, 10);
   return Number.isFinite(parsed) ? parsed : 0;
 };
-const hasNoRequirement = (value?: string | null): boolean => !value || value.trim() === '' || value.includes(NO_REQUIREMENT);
+const hasNoRequirement = (value?: string | null): boolean => !value || value.trim() === '' || value.trim() === NO_REQUIREMENT;
+const includesNoRequirement = (value?: string | null): boolean => !value || value.includes(NO_REQUIREMENT);
 
 const resolveFontChoice = (value: FontChoiceValue, fallback: string): string => {
   if (value.mode === 'none') {
@@ -403,7 +750,7 @@ const resolveIndent = (value: IndentValue): string => {
 
 const parseFontChoice = (value: string | undefined, fallback: string): FontChoiceValue => {
   const resolved = value?.trim() || fallback;
-  if (hasNoRequirement(resolved)) {
+  if (includesNoRequirement(resolved)) {
     return noRequirementFontChoice();
   }
 
@@ -414,7 +761,7 @@ const parseFontChoice = (value: string | undefined, fallback: string): FontChoic
 
 const parseSizeChoice = (value: string | undefined, fallback: string): SizeChoiceValue => {
   const resolved = value?.trim() || fallback;
-  if (hasNoRequirement(resolved)) {
+  if (includesNoRequirement(resolved)) {
     return noRequirementSizeChoice();
   }
 
@@ -441,7 +788,7 @@ const parseSizeChoice = (value: string | undefined, fallback: string): SizeChoic
 
 const parseLineHeight = (value: string | number | undefined, fallback: LineHeightValue): LineHeightValue => {
   const resolved = typeof value === 'number' ? `${value}` : value ?? '';
-  if (hasNoRequirement(resolved)) {
+  if (includesNoRequirement(resolved)) {
     return noRequirementLineHeight();
   }
 
@@ -464,12 +811,12 @@ const parseLineHeight = (value: string | number | undefined, fallback: LineHeigh
 
 const parseSpacing = (value: string | undefined, fallback: SpacingValue): SpacingValue => {
   const resolved = value ?? '';
-  if (hasNoRequirement(resolved)) {
+  if (includesNoRequirement(resolved)) {
     return noRequirementSpacing();
   }
 
-  const beforeMatch = resolved.match(/(?:Before|段前)\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
-  const afterMatch = resolved.match(/(?:After|段后)\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
+  const beforeMatch = resolved.match(/(?:Before|段前)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
+  const afterMatch = resolved.match(/(?:After|段后)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
 
   return {
     mode: 'custom',
@@ -481,7 +828,7 @@ const parseSpacing = (value: string | undefined, fallback: SpacingValue): Spacin
 
 const parseIndent = (value: string | undefined, fallback: IndentValue): IndentValue => {
   const resolved = value ?? '';
-  if (hasNoRequirement(resolved)) {
+  if (includesNoRequirement(resolved)) {
     return noRequirementIndent();
   }
 
@@ -497,7 +844,7 @@ const parseIndent = (value: string | undefined, fallback: IndentValue): IndentVa
 
 const parseMargin = (value: string | undefined, fallback: RuleFormValues['margin']): RuleFormValues['margin'] => {
   const resolved = value ?? '';
-  if (hasNoRequirement(resolved)) {
+  if (includesNoRequirement(resolved)) {
     return { ...fallback, mode: 'none' };
   }
 
@@ -523,14 +870,23 @@ const parseMargin = (value: string | undefined, fallback: RuleFormValues['margin
 
 const parseHeader = (value: string | undefined, fallback: RuleFormValues['header']): RuleFormValues['header'] => {
   if (hasNoRequirement(value)) {
-    return { preset: 'none', oddText: '', evenText: '' };
+    return { preset: 'none', oddText: '', evenText: '', style: fallback.style };
   }
 
-  const oddText = value?.match(/奇数页[:：]\s*([^；;]+)/)?.[1]?.trim() ?? fallback.oddText;
-  const evenText = value?.match(/偶数页[:：]\s*([^；;]+)/)?.[1]?.trim() ?? fallback.evenText;
+  const segments = splitTokens(value);
+  const oddSegment = segments.find((item) => item.includes('奇数页')) ?? value ?? '';
+  const evenSegment = segments.find((item) => item.includes('偶数页')) ?? value ?? '';
+  const styleSegment = segments.find((item) => item.includes('页眉样式'));
+  const oddText = oddSegment.match(/奇数页[:：]\s*(.+)$/)?.[1]?.trim() ?? fallback.oddText;
+  const evenText = evenSegment.match(/偶数页[:：]\s*(.+)$/)?.[1]?.trim() ?? fallback.evenText;
   const preset = HEADER_PRESET_OPTIONS.find((item) => item.oddText === oddText && item.evenText === evenText)?.value ?? 'custom';
 
-  return { preset, oddText, evenText };
+  return {
+    preset,
+    oddText,
+    evenText,
+    style: parseParagraphStyle(styleSegment, fallback.style),
+  };
 };
 
 const parsePageNumber = (value: string | undefined, fallback: RuleFormValues['pageNumber']): RuleFormValues['pageNumber'] => {
@@ -538,22 +894,25 @@ const parsePageNumber = (value: string | undefined, fallback: RuleFormValues['pa
     return { ...fallback, mode: 'none', alignment: 'none', style: 'none' };
   }
 
-  const resolved = value ?? '';
+  const segments = splitTokens(value);
+  const descriptorSegment = segments.find((item) => !item.includes('页脚样式')) ?? value ?? '';
+  const styleSegment = segments.find((item) => item.includes('页脚样式'));
   return {
     mode: 'custom',
-    position: resolved.includes('顶部') ? 'top' : fallback.position,
-    alignment: resolved.includes('居左') || resolved.includes('左对齐')
+    position: descriptorSegment.includes('顶部') ? 'top' : fallback.position,
+    alignment: descriptorSegment.includes('居左') || descriptorSegment.includes('左对齐')
       ? 'left'
-      : resolved.includes('居右') || resolved.includes('右对齐')
+      : descriptorSegment.includes('居右') || descriptorSegment.includes('右对齐')
         ? 'right'
         : 'center',
-    style: resolved.includes('大写罗马')
+    style: descriptorSegment.includes('大写罗马')
       ? 'romanUpper'
-      : resolved.includes('小写罗马')
+      : descriptorSegment.includes('小写罗马')
         ? 'romanLower'
-        : resolved.includes('中文')
+        : descriptorSegment.includes('中文')
           ? 'chinese'
           : 'arabic',
+    textStyle: parseParagraphStyle(styleSegment, fallback.textStyle),
   };
 };
 
@@ -612,20 +971,34 @@ const parseHeadingRules = (value: string | undefined): HeadingRuleFormValue[] =>
 
 const parseAbstract = (value: string | undefined, fallback: RuleFormValues['abstract']): RuleFormValues['abstract'] => {
   const segments = splitTokens(value);
-  const titleSegment = segments.find((item) => item.includes('标题')) ?? '';
-  const bodySegment = segments.find((item) => item.includes('正文')) ?? '';
+  const titleSegment = segments.find((item) => item.includes('摘要标题') || item.includes('标题')) ?? '';
+  const bodySegment = segments.find((item) => item.includes('摘要正文') || item.includes('正文')) ?? '';
   const lengthSegment = segments.find((item) => item.includes('字')) ?? '';
   const lengthMatch = lengthSegment.match(/(\d+)\s*[-~至]\s*(\d+)/);
-  const titleFont = COMMON_FONTS.find((item) => titleSegment.includes(item));
-  const bodyFont = COMMON_FONTS.find((item) => bodySegment.includes(item));
+  const titleStyle = parseParagraphStyle(titleSegment, createParagraphStyle({
+    font: fallback.titleFont,
+    size: fallback.titleSize,
+    alignment: fallback.titleAlignment,
+    lineHeight: fallback.titleLineHeight,
+    spacing: fallback.titleSpacing,
+  }));
+  const bodyStyle = parseParagraphStyle(bodySegment, createParagraphStyle({
+    font: fallback.bodyFont,
+    size: fallback.bodySize,
+    lineHeight: fallback.lineHeight,
+    spacing: fallback.bodySpacing,
+  }));
 
   return {
-    titleFont: parseFontChoice(titleFont ?? (titleSegment.includes(NO_REQUIREMENT) ? NO_REQUIREMENT : fallback.titleFont.preset), fallback.titleFont.preset),
-    titleSize: parseSizeChoice(titleSegment, fallback.titleSize.named),
-    titleAlignment: parseAlignmentOption(titleSegment),
-    bodyFont: parseFontChoice(bodyFont ?? (bodySegment.includes(NO_REQUIREMENT) ? NO_REQUIREMENT : fallback.bodyFont.preset), fallback.bodyFont.preset),
-    bodySize: parseSizeChoice(bodySegment, fallback.bodySize.named),
-    lineHeight: parseLineHeight(bodySegment, fallback.lineHeight),
+    titleFont: titleStyle.font,
+    titleSize: titleStyle.size,
+    titleAlignment: titleStyle.alignment,
+    titleLineHeight: titleStyle.lineHeight,
+    titleSpacing: titleStyle.spacing,
+    bodyFont: bodyStyle.font,
+    bodySize: bodyStyle.size,
+    lineHeight: bodyStyle.lineHeight,
+    bodySpacing: bodyStyle.spacing,
     lengthMode: lengthMatch ? 'custom' : 'none',
     minLength: lengthMatch ? Number.parseInt(lengthMatch[1], 10) : fallback.minLength,
     maxLength: lengthMatch ? Number.parseInt(lengthMatch[2], 10) : fallback.maxLength,
@@ -659,24 +1032,72 @@ const parseReference = (value: string | undefined): RuleFormValues['reference'] 
     : { preset: '__custom__', custom: resolved };
 };
 
-const parseCaption = (value: string | undefined, fallback: 'above' | 'below'): { mode: CaptionMode; position: 'above' | 'below' } => {
+const parseParagraphStyle = (value: string | undefined, fallback: ParagraphStyleFormValue): ParagraphStyleFormValue => {
+  const resolved = value ?? '';
+  const parts = resolved.split('|').map((item) => item.trim());
+  const spacingSegment = parts.find((item) => item.includes('段前') || item.includes('段后')) ?? resolved;
+  const lineHeightSegment = parts.find((item) => item.includes('行距')) ?? resolved;
+  const indentSegment = parts.find((item) => item.includes('首行缩进')) ?? resolved;
+  const alignmentSegment = parts.find((item) => item.includes('对齐') || item.includes('居中') || item.includes('居左') || item.includes('居右')) ?? resolved;
+  const fontSegment = parts.find((item) => item.includes('字体=')) ?? resolved;
+  const sizeSegment = parts.find((item) => item.includes('字号=')) ?? resolved;
+  const font = COMMON_FONTS.find((item) => fontSegment.includes(item));
+
+  return {
+    font: parseFontChoice(font ?? (fontSegment.includes(NO_REQUIREMENT) ? NO_REQUIREMENT : fallback.font.preset), fallback.font.preset),
+    size: parseSizeChoice(sizeSegment.includes('字号=') ? sizeSegment.split('字号=').slice(1).join('字号=') : sizeSegment, fallback.size.named),
+    alignment: parseAlignmentOption(alignmentSegment),
+    lineHeight: parseLineHeight(lineHeightSegment, fallback.lineHeight),
+    spacing: parseSpacing(spacingSegment, fallback.spacing),
+    indent: parseIndent(indentSegment, fallback.indent),
+  };
+};
+
+const parseCaption = (value: string | undefined, fallback: CaptionFormValue): CaptionFormValue => {
   if (hasNoRequirement(value)) {
-    return { mode: 'none', position: fallback };
+    return {
+      ...fallback,
+      mode: 'none',
+    };
   }
 
   return {
     mode: 'custom',
-    position: value?.includes('上方') ? 'above' : value?.includes('下方') ? 'below' : fallback,
+    ...parseParagraphStyle(value, fallback),
+    position: value?.includes('上方') ? 'above' : value?.includes('下方') ? 'below' : fallback.position,
   };
 };
 
-const buildFormValues = (config: PaperRuleConfig, template?: Pick<RuleTemplate, 'name' | 'description'>): RuleFormValues => {
-  const fallback = defaultFormValues();
+const parseToc = (value: string | undefined, fallback: TocFormValue): TocFormValue => {
+  if (hasNoRequirement(value)) {
+    return {
+      ...fallback,
+      mode: 'none',
+    };
+  }
+
+  const segments = splitTokens(value);
+  const titleSegment = segments.find((item) => item.includes('目录标题') || item.includes('标题')) ?? '';
+  const bodySegment = segments.find((item) => item.includes('目录正文') || item.includes('正文')) ?? '';
+
+  return {
+    mode: 'custom',
+    title: parseParagraphStyle(titleSegment, fallback.title),
+    body: parseParagraphStyle(bodySegment, fallback.body),
+  };
+};
+
+const buildFormValues = (
+  config: PaperRuleConfig,
+  template?: Pick<RuleTemplate, 'name' | 'description'>,
+  templateNameDefault = TEMPLATE_NAME_DEFAULT,
+): RuleFormValues => {
+  const fallback = defaultFormValues(templateNameDefault);
   const headingRules = parseHeadingRules(config.headingFormats);
 
   return {
     ...fallback,
-    templateName: template?.name ?? TEMPLATE_NAME_DEFAULT,
+    templateName: template?.name ?? templateNameDefault,
     description: template?.description ?? '',
     pageSize: hasNoRequirement(config.pageSize) ? 'none' : ((config.pageSize as RuleFormValues['pageSize']) || fallback.pageSize),
     margin: parseMargin(config.margin, fallback.margin),
@@ -699,8 +1120,9 @@ const buildFormValues = (config: PaperRuleConfig, template?: Pick<RuleTemplate, 
     abstract: parseAbstract(config.abstractFormat, fallback.abstract),
     keywords: parseKeywords(config.keywordFormat, fallback.keywords),
     reference: parseReference(config.referenceFormat),
-    figureCaption: parseCaption(config.figureCaptionRule, 'below'),
-    tableCaption: parseCaption(config.tableCaptionRule, 'above'),
+    figureCaption: parseCaption(config.figureCaptionRule, fallback.figureCaption),
+    tableCaption: parseCaption(config.tableCaptionRule, fallback.tableCaption),
+    toc: parseToc(config.tocRule, fallback.toc),
   };
 };
 
@@ -756,8 +1178,76 @@ const buildPageNumberRule = (value: RuleFormValues['pageNumber']): string => {
         : value.style === 'arabic'
           ? '阿拉伯数字'
           : NO_REQUIREMENT;
+  const footerStyleParts = buildParagraphStyleSegments(value.textStyle, '宋体', '五号');
+  const segments = [`${positionText}${alignmentText}，${styleText}`];
+  if (footerStyleParts.length > 0) {
+    segments.push(['页脚样式', ...footerStyleParts].join('|'));
+  }
 
-  return `${positionText}${alignmentText}，${styleText}`;
+  return segments.join('；');
+};
+
+const buildNamedParagraphStyleSegment = (
+  label: string,
+  value: ParagraphStyleFormValue,
+  fallbackFont: string,
+  fallbackSize: string
+): string => {
+  const parts = buildParagraphStyleSegments(value, fallbackFont, fallbackSize);
+  return parts.length > 0 ? [label, ...parts].join('|') : `${label}${NO_REQUIREMENT}`;
+};
+
+const buildHeaderRule = (value: RuleFormValues['header']): string => {
+  if (value.preset === 'none') {
+    return NO_REQUIREMENT;
+  }
+
+  const segments = [
+    `奇数页：${value.oddText.trim() || '地大高等学历继续教育'}`,
+    `偶数页：${value.evenText.trim() || '学生姓名：论文题目'}`,
+  ];
+  const headerStyleParts = buildParagraphStyleSegments(value.style, '宋体', '五号');
+  if (headerStyleParts.length > 0) {
+    segments.push(['页眉样式', ...headerStyleParts].join('|'));
+  }
+
+  return segments.join('；');
+};
+
+const buildParagraphStyleSegments = (value: ParagraphStyleFormValue, fallbackFont: string, fallbackSize: string): string[] => {
+  const parts: string[] = [];
+  const font = resolveFontChoice(value.font, fallbackFont);
+  const size = resolveSizeChoice(value.size, fallbackSize);
+  const lineHeight = resolveLineHeight(value.lineHeight);
+  const spacing = resolveSpacing(value.spacing);
+  const indent = resolveIndent(value.indent);
+
+  if (!hasNoRequirement(font)) {
+    parts.push(`字体=${font}`);
+  }
+
+  if (!hasNoRequirement(size)) {
+    parts.push(`字号=${size}`);
+  }
+
+  if (value.alignment !== 'none') {
+    parts.push(`对齐=${value.alignment === 'left' ? '居左' : value.alignment === 'right' ? '居右' : '居中'}`);
+  }
+
+  if (!hasNoRequirement(lineHeight)) {
+    parts.push(`行距=${lineHeight}`);
+  }
+
+  if (!hasNoRequirement(spacing)) {
+    parts.push(`段前=${formatNumber(value.spacing.before)}${value.spacing.unit}`);
+    parts.push(`段后=${formatNumber(value.spacing.after)}${value.spacing.unit}`);
+  }
+
+  if (!hasNoRequirement(indent)) {
+    parts.push(`首行缩进=${indent}`);
+  }
+
+  return parts;
 };
 
 const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
@@ -776,21 +1266,22 @@ const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
     ? NO_REQUIREMENT
     : normalizedRequiredSections.join('; ');
 
-  const abstractTitleParts = [
-    resolveFontChoice(values.abstract.titleFont, '黑体'),
-    resolveSizeChoice(values.abstract.titleSize, '小二'),
-    values.abstract.titleAlignment === 'left' ? '居左' : values.abstract.titleAlignment === 'right' ? '居右' : values.abstract.titleAlignment === 'center' ? '居中' : NO_REQUIREMENT,
-  ].filter((item) => !hasNoRequirement(item));
-  const abstractBodyParts = [
-    resolveFontChoice(values.abstract.bodyFont, '宋体'),
-    resolveSizeChoice(values.abstract.bodySize, '小四'),
-    resolveLineHeight(values.abstract.lineHeight),
-  ].filter((item) => !hasNoRequirement(item));
+  const abstractTitleSegment = buildNamedParagraphStyleSegment('摘要标题', createParagraphStyle({
+    font: values.abstract.titleFont,
+    size: values.abstract.titleSize,
+    alignment: values.abstract.titleAlignment,
+    lineHeight: values.abstract.titleLineHeight,
+    spacing: values.abstract.titleSpacing,
+  }), '黑体', '小二');
+  const abstractBodySegment = buildNamedParagraphStyleSegment('正文', createParagraphStyle({
+    font: values.abstract.bodyFont,
+    size: values.abstract.bodySize,
+    lineHeight: values.abstract.lineHeight,
+    spacing: values.abstract.bodySpacing,
+  }), '宋体', '小四');
   const abstractSegments = [
-    abstractTitleParts.length > 0 ? `标题${abstractTitleParts.join('')}` : '标题无要求',
-    abstractBodyParts.length > 0
-      ? `正文${abstractBodyParts[0]}${abstractBodyParts[1] ?? ''}${abstractBodyParts[2] ? `，${abstractBodyParts[2].includes('pt') || abstractBodyParts[2].includes('磅') ? `固定值${abstractBodyParts[2]}` : `${abstractBodyParts[2]}倍行距`}` : ''}`
-      : '正文无要求',
+    abstractTitleSegment,
+    abstractBodySegment,
     values.abstract.lengthMode === 'custom' ? `${values.abstract.minLength}-${values.abstract.maxLength}字` : '字数无要求',
   ];
 
@@ -806,15 +1297,17 @@ const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
           ? '词间用顿号分隔'
           : '分隔符无要求',
   ];
+  const figureCaptionParts = buildParagraphStyleSegments(values.figureCaption, '宋体', '五号');
+  const tableCaptionParts = buildParagraphStyleSegments(values.tableCaption, '宋体', '五号');
+  const tocTitleParts = buildParagraphStyleSegments(values.toc.title, '黑体', '小二');
+  const tocBodyParts = buildParagraphStyleSegments(values.toc.body, '宋体', '小四');
 
   return {
     pageSize: values.pageSize === 'none' ? NO_REQUIREMENT : values.pageSize,
     margin: values.margin.mode === 'none'
       ? NO_REQUIREMENT
       : `上${formatNumber(values.margin.top)}${values.margin.unit}，下${formatNumber(values.margin.bottom)}${values.margin.unit}，左${formatNumber(values.margin.left)}${values.margin.unit}，右${formatNumber(values.margin.right)}${values.margin.unit}`,
-    headerRule: values.header.preset === 'none'
-      ? NO_REQUIREMENT
-      : `奇数页：${values.header.oddText.trim() || '地大高等学历继续教育'}；偶数页：${values.header.evenText.trim() || '学生姓名：论文题目'}`,
+    headerRule: buildHeaderRule(values.header),
     coverItems,
     requiredSections,
     bodyFont: resolveFontChoice(values.body.font, '宋体'),
@@ -833,10 +1326,16 @@ const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
         : values.reference.preset,
     figureCaptionRule: values.figureCaption.mode === 'none'
       ? NO_REQUIREMENT
-      : `图题注格式：图1.1 标题，题注位于图${values.figureCaption.position === 'above' ? '上方' : '下方'}`,
+      : ['图题注', `位置=${values.figureCaption.position === 'above' ? '上方' : '下方'}`, ...figureCaptionParts].join('|'),
     tableCaptionRule: values.tableCaption.mode === 'none'
       ? NO_REQUIREMENT
-      : `表题注格式：表1.1 标题，题注位于表${values.tableCaption.position === 'above' ? '上方' : '下方'}`,
+      : ['表题注', `位置=${values.tableCaption.position === 'above' ? '上方' : '下方'}`, ...tableCaptionParts].join('|'),
+    tocRule: values.toc.mode === 'none'
+      ? NO_REQUIREMENT
+      : [
+        ['目录标题', ...tocTitleParts].join('|'),
+        ['目录正文', ...tocBodyParts].join('|'),
+      ].join('；'),
   };
 };
 
@@ -844,7 +1343,9 @@ const FontChoiceField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
-}> = ({ form, label, name }) => {
+  copy: RulesCopy;
+  isEnglish: boolean;
+}> = ({ form, label, name, copy, isEnglish }) => {
   const mode = Form.useWatch([...name, 'mode'], form) as FontMode | undefined;
 
   return (
@@ -854,21 +1355,21 @@ const FontChoiceField: React.FC<{
           <Select
             style={{ width: 120 }}
             options={[
-              { label: '无要求', value: 'none' },
-              { label: '常用字体', value: 'preset' },
-              { label: '自定义', value: 'custom' },
+              { label: copy.noRequirement, value: 'none' },
+              { label: copy.commonFonts, value: 'preset' },
+              { label: copy.custom, value: 'custom' },
             ]}
           />
         </Form.Item>
         {mode === 'custom' ? (
           <Form.Item name={[...name, 'custom']} noStyle>
-            <Input placeholder="输入字体名称" />
+            <Input placeholder={copy.customFontPlaceholder} />
           </Form.Item>
         ) : (
           <Form.Item name={[...name, 'preset']} noStyle>
             <Select
               disabled={mode === 'none'}
-              options={COMMON_FONTS.map((item) => ({ label: item, value: item }))}
+              options={COMMON_FONTS.map((item) => ({ label: getDisplayLabel(item, isEnglish, FONT_DISPLAY_LABELS), value: item }))}
               showSearch
               optionFilterProp="label"
             />
@@ -883,7 +1384,9 @@ const SizeChoiceField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
-}> = ({ form, label, name }) => {
+  copy: RulesCopy;
+  isEnglish: boolean;
+}> = ({ form, label, name, copy, isEnglish }) => {
   const mode = Form.useWatch([...name, 'mode'], form) as SizeMode | undefined;
 
   return (
@@ -893,9 +1396,9 @@ const SizeChoiceField: React.FC<{
           <Select
             style={{ width: 120 }}
             options={[
-              { label: '无要求', value: 'none' },
-              { label: '常用字号', value: 'named' },
-              { label: '自定义', value: 'custom' },
+              { label: copy.noRequirement, value: 'none' },
+              { label: copy.commonSizes, value: 'named' },
+              { label: copy.custom, value: 'custom' },
             ]}
           />
         </Form.Item>
@@ -905,14 +1408,14 @@ const SizeChoiceField: React.FC<{
               <InputNumber<number> style={{ width: '100%' }} min={5} max={72} step={0.5} precision={1} parser={toHalfStep} />
             </Form.Item>
             <Form.Item name={[...name, 'unit']} noStyle>
-              <Select style={{ width: 90 }} options={[{ label: 'pt', value: 'pt' }, { label: '磅', value: '磅' }]} />
+              <Select style={{ width: 90 }} options={[{ label: 'pt', value: 'pt' }, { label: isEnglish ? 'point (磅)' : '磅', value: '磅' }]} />
             </Form.Item>
           </>
         ) : (
           <Form.Item name={[...name, 'named']} noStyle>
             <Select
               disabled={mode === 'none'}
-              options={NAMED_FONT_SIZES.map((item) => ({ label: item, value: item }))}
+              options={NAMED_FONT_SIZES.map((item) => ({ label: getDisplayLabel(item, isEnglish, NAMED_SIZE_DISPLAY_LABELS), value: item }))}
               showSearch
               optionFilterProp="label"
             />
@@ -927,7 +1430,9 @@ const LineHeightField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
-}> = ({ form, label, name }) => {
+  copy: RulesCopy;
+  isEnglish: boolean;
+}> = ({ form, label, name, copy, isEnglish }) => {
   const mode = Form.useWatch([...name, 'mode'], form) as LineHeightMode | undefined;
 
   return (
@@ -937,9 +1442,9 @@ const LineHeightField: React.FC<{
           <Select
             style={{ width: 120 }}
             options={[
-              { label: '无要求', value: 'none' },
-              { label: '固定值', value: 'fixed' },
-              { label: '倍数', value: 'multiple' },
+              { label: copy.noRequirement, value: 'none' },
+              { label: copy.fixedValue, value: 'fixed' },
+              { label: copy.multiple, value: 'multiple' },
             ]}
           />
         </Form.Item>
@@ -959,8 +1464,8 @@ const LineHeightField: React.FC<{
             style={{ width: 100 }}
             disabled={mode === 'none'}
             options={mode === 'multiple'
-              ? [{ label: '倍', value: '倍' }]
-              : [{ label: 'pt', value: 'pt' }, { label: '磅', value: '磅' }]}
+              ? [{ label: isEnglish ? 'x' : '倍', value: '倍' }]
+              : [{ label: 'pt', value: 'pt' }, { label: isEnglish ? 'point (磅)' : '磅', value: '磅' }]}
           />
         </Form.Item>
       </Space.Compact>
@@ -972,7 +1477,9 @@ const SpacingField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
-}> = ({ form, label, name }) => {
+  copy: RulesCopy;
+  isEnglish: boolean;
+}> = ({ form, label, name, copy, isEnglish }) => {
   const mode = Form.useWatch([...name, 'mode'], form) as SpacingMode | undefined;
 
   return (
@@ -982,8 +1489,8 @@ const SpacingField: React.FC<{
           <Select
             style={{ width: 120 }}
             options={[
-              { label: '无要求', value: 'none' },
-              { label: '自定义', value: 'custom' },
+              { label: copy.noRequirement, value: 'none' },
+              { label: copy.custom, value: 'custom' },
             ]}
           />
         </Form.Item>
@@ -996,7 +1503,7 @@ const SpacingField: React.FC<{
             step={0.5}
             precision={1}
             parser={toHalfStep}
-            placeholder="段前"
+            placeholder={copy.before}
           />
         </Form.Item>
         <Form.Item name={[...name, 'after']} noStyle>
@@ -1008,14 +1515,14 @@ const SpacingField: React.FC<{
             step={0.5}
             precision={1}
             parser={toHalfStep}
-            placeholder="段后"
+            placeholder={copy.after}
           />
         </Form.Item>
         <Form.Item name={[...name, 'unit']} noStyle>
           <Select
             style={{ width: 90 }}
             disabled={mode === 'none'}
-            options={[{ label: 'pt', value: 'pt' }, { label: '磅', value: '磅' }]}
+            options={[{ label: 'pt', value: 'pt' }, { label: isEnglish ? 'point (磅)' : '磅', value: '磅' }]}
           />
         </Form.Item>
       </Space.Compact>
@@ -1027,7 +1534,8 @@ const IndentField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
-}> = ({ form, label, name }) => {
+  copy: RulesCopy;
+}> = ({ form, label, name, copy }) => {
   const mode = Form.useWatch([...name, 'mode'], form) as IndentMode | undefined;
 
   return (
@@ -1037,8 +1545,8 @@ const IndentField: React.FC<{
           <Select
             style={{ width: 120 }}
             options={[
-              { label: '无要求', value: 'none' },
-              { label: '自定义', value: 'custom' },
+              { label: copy.noRequirement, value: 'none' },
+              { label: copy.custom, value: 'custom' },
             ]}
           />
         </Form.Item>
@@ -1054,7 +1562,7 @@ const IndentField: React.FC<{
           />
         </Form.Item>
         <Form.Item name={[...name, 'unit']} noStyle>
-          <Select style={{ width: 90 }} disabled options={[{ label: '字符', value: '字符' }]} />
+          <Select style={{ width: 90 }} disabled options={[{ label: copy.character, value: '字符' }]} />
         </Form.Item>
       </Space.Compact>
     </Form.Item>
@@ -1064,59 +1572,107 @@ const IndentField: React.FC<{
 const AlignmentField: React.FC<{
   label: string;
   name: NamePath;
-}> = ({ label, name }) => (
+  copy: RulesCopy;
+}> = ({ label, name, copy }) => (
   <Form.Item name={name} label={label}>
     <Select
       options={[
-        { label: '无要求', value: 'none' },
-        { label: '居左', value: 'left' },
-        { label: '居中', value: 'center' },
-        { label: '居右', value: 'right' },
+        { label: copy.noRequirement, value: 'none' },
+        { label: copy.left, value: 'left' },
+        { label: copy.center, value: 'center' },
+        { label: copy.right, value: 'right' },
       ]}
     />
   </Form.Item>
+);
+
+const ParagraphStyleFields: React.FC<{
+  form: FormInstance<RuleFormValues>;
+  baseName: NamePath;
+  fontLabel?: string;
+  sizeLabel?: string;
+  alignmentLabel?: string;
+  lineHeightLabel?: string;
+  spacingLabel?: string;
+  indentLabel?: string;
+  copy: RulesCopy;
+  isEnglish: boolean;
+}> = ({
+  form,
+  baseName,
+  copy,
+  isEnglish,
+  fontLabel = copy.font,
+  sizeLabel = copy.size,
+  alignmentLabel = copy.alignment,
+  lineHeightLabel = copy.lineHeight,
+  spacingLabel = copy.spacing,
+  indentLabel = copy.indent,
+}) => (
+  <Row gutter={16}>
+    <Col span={8}>
+      <FontChoiceField form={form} label={fontLabel} name={[...baseName, 'font']} copy={copy} isEnglish={isEnglish} />
+    </Col>
+    <Col span={8}>
+      <SizeChoiceField form={form} label={sizeLabel} name={[...baseName, 'size']} copy={copy} isEnglish={isEnglish} />
+    </Col>
+    <Col span={8}>
+      <AlignmentField label={alignmentLabel} name={[...baseName, 'alignment']} copy={copy} />
+    </Col>
+    <Col span={8}>
+      <LineHeightField form={form} label={lineHeightLabel} name={[...baseName, 'lineHeight']} copy={copy} isEnglish={isEnglish} />
+    </Col>
+    <Col span={8}>
+      <SpacingField form={form} label={spacingLabel} name={[...baseName, 'spacing']} copy={copy} isEnglish={isEnglish} />
+    </Col>
+    <Col span={8}>
+      <IndentField form={form} label={indentLabel} name={[...baseName, 'indent']} copy={copy} />
+    </Col>
+  </Row>
 );
 
 const HeadingRuleCard: React.FC<{
   form: FormInstance<RuleFormValues>;
   name: number;
   remove: (index: number) => void;
-}> = ({ form, name, remove }) => {
+  copy: RulesCopy;
+  isEnglish: boolean;
+}> = ({ form, name, remove, copy, isEnglish }) => {
   const level = Form.useWatch(['headingRules', name, 'level'], form) as number | undefined;
 
   return (
     <Card
       size="small"
-      title={`标题层级 ${level ?? ''}`}
+      title={`${copy.headingLevelTitle} ${level ?? ''}`}
       extra={
         <Button type="text" danger icon={<MinusCircleOutlined />} onClick={() => remove(name)}>
-          删除
+          {copy.delete}
         </Button>
       }
     >
       <Row gutter={16}>
         <Col span={8}>
-          <Form.Item name={['headingRules', name, 'level']} label="级别">
+          <Form.Item name={['headingRules', name, 'level']} label={copy.level}>
             <InputNumber<number> style={{ width: '100%' }} min={1} max={9} step={1} precision={0} parser={toInteger} />
           </Form.Item>
         </Col>
         <Col span={8}>
-          <FontChoiceField form={form} label="字体" name={['headingRules', name, 'font']} />
+          <FontChoiceField form={form} label={copy.font} name={['headingRules', name, 'font']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-          <SizeChoiceField form={form} label="字号" name={['headingRules', name, 'size']} />
+          <SizeChoiceField form={form} label={copy.size} name={['headingRules', name, 'size']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-                    <AlignmentField label="对齐方式" name={['headingRules', name, 'alignment']} />
+                    <AlignmentField label={copy.alignment} name={['headingRules', name, 'alignment']} copy={copy} />
         </Col>
         <Col span={8}>
-          <LineHeightField form={form} label="行距" name={['headingRules', name, 'lineHeight']} />
+          <LineHeightField form={form} label={copy.lineHeight} name={['headingRules', name, 'lineHeight']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-          <SpacingField form={form} label="段前段后" name={['headingRules', name, 'spacing']} />
+          <SpacingField form={form} label={copy.spacing} name={['headingRules', name, 'spacing']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-          <IndentField form={form} label="首行缩进" name={['headingRules', name, 'indent']} />
+          <IndentField form={form} label={copy.indent} name={['headingRules', name, 'indent']} copy={copy} />
         </Col>
       </Row>
     </Card>
@@ -1124,6 +1680,8 @@ const HeadingRuleCard: React.FC<{
 };
 
 const RulesConfig: React.FC = () => {
+  const { isEnglish } = useI18n();
+  const copy = useMemo(() => getRulesCopy(isEnglish), [isEnglish]);
   const [form] = Form.useForm<RuleFormValues>();
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -1143,7 +1701,7 @@ const RulesConfig: React.FC = () => {
   useEffect(() => {
     if (!templateId) {
       setCurrentTemplate(null);
-      form.setFieldsValue(defaultFormValues());
+      form.setFieldsValue(defaultFormValues(copy.defaultTemplateName));
       return;
     }
 
@@ -1152,16 +1710,16 @@ const RulesConfig: React.FC = () => {
       try {
         const template = await api.getTemplate(templateId);
         setCurrentTemplate(template);
-        form.setFieldsValue(buildFormValues({ ...defaultRules, ...template.config }, template));
+        form.setFieldsValue(buildFormValues({ ...defaultRules, ...template.config }, template, copy.defaultTemplateName));
       } catch {
-        message.error('加载模板失败');
+        message.error(copy.loadTemplateFailed);
       } finally {
         setLoading(false);
       }
     };
 
     void loadTemplate();
-  }, [form, templateId]);
+  }, [copy.defaultTemplateName, copy.loadTemplateFailed, form, templateId]);
 
   const handleValuesChange = (changedValues: Partial<RuleFormValues>) => {
     if (!changedValues.header?.preset) {
@@ -1215,7 +1773,7 @@ const RulesConfig: React.FC = () => {
     const levelSet = new Set<number>();
     for (const item of normalizedHeadingRules) {
       if (levelSet.has(item.level)) {
-        message.error(`标题层级 ${item.level} 重复了，请调整后再保存`);
+        message.error(copy.duplicateHeadingLevel(item.level));
         return;
       }
 
@@ -1223,12 +1781,12 @@ const RulesConfig: React.FC = () => {
     }
 
     if (values.abstract.lengthMode === 'custom' && values.abstract.minLength > values.abstract.maxLength) {
-      message.error('摘要字数范围设置有误，最少字数不能大于最多字数');
+      message.error(copy.abstractRangeInvalid);
       return;
     }
 
     if (values.keywords.countMode === 'custom' && values.keywords.minCount > values.keywords.maxCount) {
-      message.error('关键词数量范围设置有误，最少数量不能大于最多数量');
+      message.error(copy.keywordsRangeInvalid);
       return;
     }
 
@@ -1249,10 +1807,10 @@ const RulesConfig: React.FC = () => {
         isDefault: currentTemplate?.isDefault ?? false,
       });
       form.setFieldValue('headingRules', normalizedHeadingRules);
-      message.success(currentTemplate ? '模板更新成功' : '模板保存成功');
+      message.success(currentTemplate ? copy.saveEditSuccess : copy.saveCreateSuccess);
       navigate('/templates');
     } catch {
-      message.error('模板保存失败');
+      message.error(copy.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -1260,16 +1818,16 @@ const RulesConfig: React.FC = () => {
 
   const handleReset = () => {
     if (currentTemplate) {
-      form.setFieldsValue(buildFormValues({ ...defaultRules, ...currentTemplate.config }, currentTemplate));
+      form.setFieldsValue(buildFormValues({ ...defaultRules, ...currentTemplate.config }, currentTemplate, copy.defaultTemplateName));
       return;
     }
 
-    form.setFieldsValue(defaultFormValues());
+    form.setFieldsValue(defaultFormValues(copy.defaultTemplateName));
   };
 
   return (
     <div data-testid="page-rules" style={{ maxWidth: 1220, margin: '0 auto' }}>
-      <Card variant="borderless" title={<span style={{ fontSize: 20 }}>{currentTemplate ? '编辑模板' : '规则配置'}</span>}>
+      <Card variant="borderless" title={<span style={{ fontSize: 20 }}>{currentTemplate ? copy.pageTitleEdit : copy.pageTitleCreate}</span>}>
         {loading ? (
           <Skeleton active paragraph={{ rows: 16 }} />
         ) : (
@@ -1277,30 +1835,36 @@ const RulesConfig: React.FC = () => {
             <Form
               form={form}
               layout="vertical"
-              initialValues={defaultFormValues()}
+              initialValues={defaultFormValues(copy.defaultTemplateName)}
               onValuesChange={handleValuesChange}
               onFinish={handleSave}
             >
               <Row gutter={24}>
                 <Col span={12}>
-                  <Form.Item name="templateName" label="模板名称" rules={[{ required: true, message: '请输入模板名称' }]}>
-                    <Input placeholder="例如：地大本科毕业论文模板" />
+                  <Form.Item name="templateName" label={copy.templateName} rules={[{ required: true, message: copy.templateName }]}>
+                    <Input data-testid="template-name-input" placeholder={copy.templateNamePlaceholder} />
                   </Form.Item>
                 </Col>
                 <Col span={12}>
-                  <Form.Item name="description" label="模板说明">
-                    <Input placeholder="说明这套规则适用的论文类型" />
+                  <Form.Item name="description" label={copy.templateDescription}>
+                    <Input data-testid="template-description-input" placeholder={copy.templateDescriptionPlaceholder} />
                   </Form.Item>
                 </Col>
               </Row>
 
-              <Divider>页面与页眉页码</Divider>
+              <Tabs
+                type="card"
+                items={[
+                  {
+                    key: 'page',
+                    label: copy.sectionPage,
+                    children: (
               <Row gutter={24}>
                 <Col span={8}>
-                  <Form.Item name="pageSize" label="纸张规格">
+                  <Form.Item name="pageSize" label={copy.paperSize}>
                     <Select
                       options={[
-                        { label: '无要求', value: 'none' },
+                        { label: copy.noRequirement, value: 'none' },
                         { label: 'A4（210 × 297 mm）', value: 'A4' },
                         { label: 'B5（176 × 250 mm）', value: 'B5' },
                         { label: 'A3（297 × 420 mm）', value: 'A3' },
@@ -1309,28 +1873,28 @@ const RulesConfig: React.FC = () => {
                   </Form.Item>
                 </Col>
                 <Col span={16}>
-                  <Form.Item label="页边距">
+                  <Form.Item label={copy.margin}>
                     <Space.Compact block>
                       <Form.Item name={['margin', 'mode']} noStyle>
                         <Select
                           style={{ width: 120 }}
                           options={[
-                            { label: '无要求', value: 'none' },
-                            { label: '自定义', value: 'custom' },
+                            { label: copy.noRequirement, value: 'none' },
+                            { label: copy.custom, value: 'custom' },
                           ]}
                         />
                       </Form.Item>
                       <Form.Item name={['margin', 'top']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder="上" disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Top' : '上'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'bottom']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder="下" disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Bottom' : '下'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'left']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder="左" disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Left' : '左'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'right']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder="右" disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Right' : '右'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'unit']} noStyle>
                         <Select style={{ width: 100 }} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} options={[{ label: 'cm', value: 'cm' }, { label: 'mm', value: 'mm' }]} />
@@ -1339,107 +1903,147 @@ const RulesConfig: React.FC = () => {
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name={['header', 'preset']} label="页眉方案">
-                    <Select options={HEADER_PRESET_OPTIONS.map((item) => ({ label: item.label, value: item.value }))} />
+                  <Form.Item name={['header', 'preset']} label={copy.headerPreset}>
+                    <Select options={HEADER_PRESET_OPTIONS.map((item) => ({ label: getHeaderPresetLabel(item.value, copy), value: item.value }))} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name={['header', 'oddText']} label="奇数页页眉">
-                    <Input placeholder="输入奇数页内容" disabled={Form.useWatch(['header', 'preset'], form) === 'none'} />
+                  <Form.Item name={['header', 'oddText']} label={copy.oddHeader}>
+                    <Input placeholder={copy.oddHeader} disabled={Form.useWatch(['header', 'preset'], form) === 'none'} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name={['header', 'evenText']} label="偶数页页眉">
-                    <Input placeholder="输入偶数页内容" disabled={Form.useWatch(['header', 'preset'], form) === 'none'} />
+                  <Form.Item name={['header', 'evenText']} label={copy.evenHeader}>
+                    <Input placeholder={copy.evenHeader} disabled={Form.useWatch(['header', 'preset'], form) === 'none'} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name={['pageNumber', 'mode']} label="页码要求">
-                    <Select options={[{ label: '无要求', value: 'none' }, { label: '自定义', value: 'custom' }]} />
+                  <Form.Item name={['pageNumber', 'mode']} label={copy.pageNumberRule}>
+                    <Select options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name={['pageNumber', 'position']} label="页码位置">
-                    <Select disabled={Form.useWatch(['pageNumber', 'mode'], form) === 'none'} options={[{ label: '顶部', value: 'top' }, { label: '底部', value: 'bottom' }]} />
+                  <Form.Item name={['pageNumber', 'position']} label={copy.pageNumberPosition}>
+                    <Select disabled={Form.useWatch(['pageNumber', 'mode'], form) === 'none'} options={[{ label: copy.top, value: 'top' }, { label: copy.bottom, value: 'bottom' }]} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name={['pageNumber', 'alignment']} label="页码对齐">
+                  <Form.Item name={['pageNumber', 'alignment']} label={copy.pageNumberAlignment}>
                     <Select
                       disabled={Form.useWatch(['pageNumber', 'mode'], form) === 'none'}
                       options={[
-                        { label: '无要求', value: 'none' },
-                        { label: '居左', value: 'left' },
-                        { label: '居中', value: 'center' },
-                        { label: '居右', value: 'right' },
+                        { label: copy.noRequirement, value: 'none' },
+                        { label: copy.left, value: 'left' },
+                        { label: copy.center, value: 'center' },
+                        { label: copy.right, value: 'right' },
                       ]}
                     />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item name={['pageNumber', 'style']} label="页码样式">
+                  <Form.Item name={['pageNumber', 'style']} label={copy.pageNumberStyle}>
                     <Select
                       disabled={Form.useWatch(['pageNumber', 'mode'], form) === 'none'}
                       options={[
-                        { label: '无要求', value: 'none' },
-                        { label: '阿拉伯数字', value: 'arabic' },
-                        { label: '小写罗马数字', value: 'romanLower' },
-                        { label: '大写罗马数字', value: 'romanUpper' },
-                        { label: '中文数字', value: 'chinese' },
+                        { label: copy.noRequirement, value: 'none' },
+                        { label: copy.arabic, value: 'arabic' },
+                        { label: copy.romanLower, value: 'romanLower' },
+                        { label: copy.romanUpper, value: 'romanUpper' },
+                        { label: copy.chineseNumber, value: 'chinese' },
                       ]}
                     />
                   </Form.Item>
                 </Col>
+                <Col span={24}>
+                  <Card size="small" title={copy.headerStyle}>
+                    <ParagraphStyleFields
+                      form={form}
+                      baseName={['header', 'style']}
+                      copy={copy}
+                      isEnglish={isEnglish}
+                      indentLabel={copy.indent}
+                    />
+                  </Card>
+                </Col>
+                <Col span={24}>
+                  <Card size="small" title={copy.footerStyle}>
+                    <ParagraphStyleFields
+                      form={form}
+                      baseName={['pageNumber', 'textStyle']}
+                      copy={copy}
+                      isEnglish={isEnglish}
+                      indentLabel={copy.indent}
+                    />
+                  </Card>
+                </Col>
               </Row>
-
-              <Divider>正文格式</Divider>
+                    ),
+                  },
+                  {
+                    key: 'body',
+                    label: copy.sectionBody,
+                    children: (
               <Row gutter={24}>
                 <Col span={12}>
-                  <FontChoiceField form={form} label="正文字体" name={['body', 'font']} />
+                  <FontChoiceField form={form} label={copy.bodyFont} name={['body', 'font']} copy={copy} isEnglish={isEnglish} />
                 </Col>
                 <Col span={12}>
-                  <SizeChoiceField form={form} label="正文字号" name={['body', 'fontSize']} />
+                  <SizeChoiceField form={form} label={copy.bodySize} name={['body', 'fontSize']} copy={copy} isEnglish={isEnglish} />
                 </Col>
                 <Col span={12}>
-                  <LineHeightField form={form} label="行距" name={['body', 'lineHeight']} />
+                  <LineHeightField form={form} label={copy.lineHeight} name={['body', 'lineHeight']} copy={copy} isEnglish={isEnglish} />
                 </Col>
                 <Col span={12}>
-                  <SpacingField form={form} label="段前段后" name={['body', 'spacing']} />
+                  <SpacingField form={form} label={copy.spacing} name={['body', 'spacing']} copy={copy} isEnglish={isEnglish} />
                 </Col>
                 <Col span={12}>
-                  <IndentField form={form} label="首行缩进" name={['body', 'indent']} />
+                  <IndentField form={form} label={copy.indent} name={['body', 'indent']} copy={copy} />
                 </Col>
               </Row>
-
-              <Divider>结构与章节</Divider>
+                    ),
+                  },
+                  {
+                    key: 'structure',
+                    label: copy.sectionStructure,
+                    children: (
               <Row gutter={24}>
                 <Col span={12}>
-                  <Form.Item label="封面字段">
+                  <Form.Item label={copy.coverItems}>
                     <Form.Item name="coverItems" noStyle>
                       <Select
                         mode="tags"
                         tokenSeparators={[';', '；', ',']}
-                        options={[NO_REQUIREMENT, ...COVER_ITEM_OPTIONS].map((item) => ({ label: item, value: item }))}
-                        placeholder="选择或补充需要检查的封面字段"
+                        options={[NO_REQUIREMENT, ...COVER_ITEM_OPTIONS].map((item) => ({
+                          label: item === NO_REQUIREMENT ? copy.noRequirement : getDisplayLabel(item, isEnglish, COVER_ITEM_DISPLAY_LABELS),
+                          value: item,
+                        }))}
+                        placeholder={copy.coverItemsPlaceholder}
                       />
                     </Form.Item>
                   </Form.Item>
                 </Col>
                 <Col span={12}>
-                  <Form.Item label="必需章节">
+                  <Form.Item label={copy.requiredSections}>
                     <Form.Item name="requiredSections" noStyle>
                       <Select
                         mode="tags"
                         tokenSeparators={[';', '；', ',']}
-                        options={[NO_REQUIREMENT, ...REQUIRED_SECTION_OPTIONS].map((item) => ({ label: item, value: item }))}
-                        placeholder="选择或补充必需章节"
+                        options={[NO_REQUIREMENT, ...REQUIRED_SECTION_OPTIONS].map((item) => ({
+                          label: item === NO_REQUIREMENT ? copy.noRequirement : getDisplayLabel(item, isEnglish, REQUIRED_SECTION_DISPLAY_LABELS),
+                          value: item,
+                        }))}
+                        placeholder={copy.requiredSectionsPlaceholder}
                       />
                     </Form.Item>
                   </Form.Item>
                 </Col>
               </Row>
-
-              <Divider>标题层级</Divider>
+                    ),
+                  },
+                  {
+                    key: 'heading',
+                    label: copy.sectionHeading,
+                    children: (
               <Form.List name="headingRules">
                 {(fields, { add, remove }) => (
                   <>
@@ -1449,43 +2053,50 @@ const RulesConfig: React.FC = () => {
                         icon={<PlusOutlined />}
                         onClick={() => add(createHeadingRule(nextHeadingLevel))}
                       >
-                        添加标题层级
+                        {copy.addHeading}
                       </Button>
-                      <span>可继续添加 4 级、5 级等标题规则</span>
+                      <span>{copy.addHeadingHint}</span>
                     </Space>
                     <Row gutter={[16, 16]}>
                       {fields.map((field) => (
                         <Col span={24} key={field.key}>
-                          <HeadingRuleCard form={form} name={field.name} remove={remove} />
+                          <HeadingRuleCard form={form} name={field.name} remove={remove} copy={copy} isEnglish={isEnglish} />
                         </Col>
                       ))}
                     </Row>
                   </>
                 )}
               </Form.List>
-
-              <Divider>摘要与关键词</Divider>
-              <Row gutter={24}>
-                <Col span={12}>
-                  <Card size="small" title="摘要标题">
-                    <FontChoiceField form={form} label="字体" name={['abstract', 'titleFont']} />
-                    <SizeChoiceField form={form} label="字号" name={['abstract', 'titleSize']} />
-                    <AlignmentField label="对齐方式" name={['abstract', 'titleAlignment']} />
+                    ),
+                  },
+                  {
+                    key: 'abstract',
+                    label: copy.sectionAbstract,
+                    children: (
+              <Row gutter={24} align="stretch">
+                <Col xs={24} lg={8}>
+                  <Card size="small" title={copy.abstractTitle} style={{ height: '100%' }}>
+                    <FontChoiceField form={form} label={copy.font} name={['abstract', 'titleFont']} copy={copy} isEnglish={isEnglish} />
+                    <SizeChoiceField form={form} label={copy.size} name={['abstract', 'titleSize']} copy={copy} isEnglish={isEnglish} />
+                    <AlignmentField label={copy.alignment} name={['abstract', 'titleAlignment']} copy={copy} />
+                    <LineHeightField form={form} label={copy.lineHeight} name={['abstract', 'titleLineHeight']} copy={copy} isEnglish={isEnglish} />
+                    <SpacingField form={form} label={copy.spacing} name={['abstract', 'titleSpacing']} copy={copy} isEnglish={isEnglish} />
                   </Card>
                 </Col>
-                <Col span={12}>
-                  <Card size="small" title="摘要正文">
-                    <FontChoiceField form={form} label="字体" name={['abstract', 'bodyFont']} />
-                    <SizeChoiceField form={form} label="字号" name={['abstract', 'bodySize']} />
-                    <LineHeightField form={form} label="行距" name={['abstract', 'lineHeight']} />
-                    <Form.Item label="字数范围">
+                <Col xs={24} lg={8}>
+                  <Card size="small" title={copy.abstractBody} style={{ height: '100%' }}>
+                    <FontChoiceField form={form} label={copy.font} name={['abstract', 'bodyFont']} copy={copy} isEnglish={isEnglish} />
+                    <SizeChoiceField form={form} label={copy.size} name={['abstract', 'bodySize']} copy={copy} isEnglish={isEnglish} />
+                    <LineHeightField form={form} label={copy.lineHeight} name={['abstract', 'lineHeight']} copy={copy} isEnglish={isEnglish} />
+                    <SpacingField form={form} label={copy.spacing} name={['abstract', 'bodySpacing']} copy={copy} isEnglish={isEnglish} />
+                    <Form.Item label={copy.abstractLength}>
                       <Space.Compact block>
                         <Form.Item name={['abstract', 'lengthMode']} noStyle>
                           <Select
                             style={{ width: 120 }}
                             options={[
-                              { label: '无要求', value: 'none' },
-                              { label: '自定义', value: 'custom' },
+                              { label: copy.noRequirement, value: 'none' },
+                              { label: copy.custom, value: 'custom' },
                             ]}
                           />
                         </Form.Item>
@@ -1498,7 +2109,7 @@ const RulesConfig: React.FC = () => {
                             precision={0}
                             parser={toInteger}
                             disabled={Form.useWatch(['abstract', 'lengthMode'], form) === 'none'}
-                            placeholder="最少"
+                            placeholder={isEnglish ? 'Min' : '最少'}
                           />
                         </Form.Item>
                         <Form.Item name={['abstract', 'maxLength']} noStyle>
@@ -1510,47 +2121,47 @@ const RulesConfig: React.FC = () => {
                             precision={0}
                             parser={toInteger}
                             disabled={Form.useWatch(['abstract', 'lengthMode'], form) === 'none'}
-                            placeholder="最多"
+                            placeholder={isEnglish ? 'Max' : '最多'}
                           />
                         </Form.Item>
                         <Button disabled style={{ width: 80 }}>
-                          字
+                          {isEnglish ? 'words' : '字'}
                         </Button>
                       </Space.Compact>
                     </Form.Item>
                   </Card>
                 </Col>
-                <Col span={12}>
-                  <Card size="small" title="关键词">
-                    <FontChoiceField form={form} label="字体" name={['keywords', 'font']} />
-                    <SizeChoiceField form={form} label="字号" name={['keywords', 'size']} />
-                    <Form.Item name={['keywords', 'separator']} label="分隔符">
+                <Col xs={24} lg={8}>
+                  <Card size="small" title={copy.keywords} style={{ height: '100%' }}>
+                    <FontChoiceField form={form} label={copy.font} name={['keywords', 'font']} copy={copy} isEnglish={isEnglish} />
+                    <SizeChoiceField form={form} label={copy.size} name={['keywords', 'size']} copy={copy} isEnglish={isEnglish} />
+                    <Form.Item name={['keywords', 'separator']} label={copy.keywordSeparator}>
                       <Select
                         options={[
-                          { label: '无要求', value: 'none' },
-                          { label: '分号', value: 'semicolon' },
-                          { label: '逗号', value: 'comma' },
-                          { label: '顿号', value: 'dunhao' },
+                          { label: copy.noRequirement, value: 'none' },
+                          { label: copy.semicolon, value: 'semicolon' },
+                          { label: copy.comma, value: 'comma' },
+                          { label: copy.dunhao, value: 'dunhao' },
                         ]}
                       />
                     </Form.Item>
-                    <Form.Item name={['keywords', 'labelBold']} label="关键词标题样式">
+                    <Form.Item name={['keywords', 'labelBold']} label={copy.keywordLabelStyle}>
                       <Select
                         options={[
-                          { label: '无要求', value: 'none' },
-                          { label: '加粗', value: 'bold' },
-                          { label: '常规', value: 'normal' },
+                          { label: copy.noRequirement, value: 'none' },
+                          { label: copy.bold, value: 'bold' },
+                          { label: copy.normal, value: 'normal' },
                         ]}
                       />
                     </Form.Item>
-                    <Form.Item label="关键词数量">
+                    <Form.Item label={copy.keywordCount}>
                       <Space.Compact block>
                         <Form.Item name={['keywords', 'countMode']} noStyle>
                           <Select
                             style={{ width: 120 }}
                             options={[
-                              { label: '无要求', value: 'none' },
-                              { label: '自定义', value: 'custom' },
+                              { label: copy.noRequirement, value: 'none' },
+                              { label: copy.custom, value: 'custom' },
                             ]}
                           />
                         </Form.Item>
@@ -1563,7 +2174,7 @@ const RulesConfig: React.FC = () => {
                             precision={0}
                             parser={toInteger}
                             disabled={Form.useWatch(['keywords', 'countMode'], form) === 'none'}
-                            placeholder="最少"
+                            placeholder={isEnglish ? 'Min' : '最少'}
                           />
                         </Form.Item>
                         <Form.Item name={['keywords', 'maxCount']} noStyle>
@@ -1575,75 +2186,128 @@ const RulesConfig: React.FC = () => {
                             precision={0}
                             parser={toInteger}
                             disabled={Form.useWatch(['keywords', 'countMode'], form) === 'none'}
-                            placeholder="最多"
+                            placeholder={isEnglish ? 'Max' : '最多'}
                           />
                         </Form.Item>
                         <Button disabled style={{ width: 80 }}>
-                          个
+                          {isEnglish ? 'items' : '个'}
                         </Button>
                       </Space.Compact>
                     </Form.Item>
                   </Card>
                 </Col>
               </Row>
-
-              <Divider>参考文献与图表题注</Divider>
+                    ),
+                  },
+                  {
+                    key: 'reference',
+                    label: copy.sectionReference,
+                    children: (
               <Row gutter={24}>
                 <Col span={12}>
-                  <Form.Item label="参考文献格式">
+                  <Form.Item label={copy.referenceFormat}>
                     <Space.Compact block>
                       <Form.Item name={['reference', 'preset']} noStyle>
                         <Select
                           style={{ width: 160 }}
                           options={[
-                            { label: '无要求', value: '__none__' },
+                            { label: copy.noRequirement, value: '__none__' },
                             ...REFERENCE_OPTIONS.map((item) => ({ label: item, value: item })),
-                            { label: '自定义', value: '__custom__' },
+                            { label: copy.custom, value: '__custom__' },
                           ]}
                         />
                       </Form.Item>
                       {referencePreset === '__custom__' ? (
                         <Form.Item name={['reference', 'custom']} noStyle>
-                          <Input placeholder="输入参考文献规范名称" />
+                          <Input placeholder={copy.customReferencePlaceholder} />
                         </Form.Item>
                       ) : (
-                        <Input disabled value={referencePreset === '__none__' ? '当前为无要求' : '已选择常用规范'} />
+                        <Input disabled value={referencePreset === '__none__' ? copy.currentNone : copy.currentPreset} />
                       )}
                     </Space.Compact>
                   </Form.Item>
                 </Col>
-                <Col span={6}>
-                  <Form.Item label="图题注">
-                    <Space.Compact block>
-                      <Form.Item name={['figureCaption', 'mode']} noStyle>
-                        <Select style={{ width: 120 }} options={[{ label: '无要求', value: 'none' }, { label: '自定义', value: 'custom' }]} />
-                      </Form.Item>
-                      <Form.Item name={['figureCaption', 'position']} noStyle>
-                        <Select disabled={Form.useWatch(['figureCaption', 'mode'], form) === 'none'} options={[{ label: '图上方', value: 'above' }, { label: '图下方', value: 'below' }]} />
-                      </Form.Item>
-                    </Space.Compact>
-                  </Form.Item>
+                <Col span={24}>
+                  <Card size="small" title={copy.figureCaption}>
+                    <Form.Item label={copy.checkMode}>
+                      <Space.Compact block>
+                        <Form.Item name={['figureCaption', 'mode']} noStyle>
+                          <Select style={{ width: 120 }} options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
+                        </Form.Item>
+                        <Form.Item name={['figureCaption', 'position']} noStyle>
+                          <Select
+                            disabled={Form.useWatch(['figureCaption', 'mode'], form) === 'none'}
+                            options={[
+                              { label: isEnglish ? 'Above Figure' : '图上方', value: 'above' },
+                              { label: isEnglish ? 'Below Figure' : '图下方', value: 'below' },
+                            ]}
+                          />
+                        </Form.Item>
+                      </Space.Compact>
+                    </Form.Item>
+                    <ParagraphStyleFields form={form} baseName={['figureCaption']} copy={copy} isEnglish={isEnglish} />
+                  </Card>
                 </Col>
-                <Col span={6}>
-                  <Form.Item label="表题注">
-                    <Space.Compact block>
-                      <Form.Item name={['tableCaption', 'mode']} noStyle>
-                        <Select style={{ width: 120 }} options={[{ label: '无要求', value: 'none' }, { label: '自定义', value: 'custom' }]} />
+                <Col span={24}>
+                  <Card size="small" title={copy.tableCaption}>
+                    <Form.Item label={copy.checkMode}>
+                      <Space.Compact block>
+                        <Form.Item name={['tableCaption', 'mode']} noStyle>
+                          <Select style={{ width: 120 }} options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
+                        </Form.Item>
+                        <Form.Item name={['tableCaption', 'position']} noStyle>
+                          <Select
+                            disabled={Form.useWatch(['tableCaption', 'mode'], form) === 'none'}
+                            options={[
+                              { label: isEnglish ? 'Above Table' : '表上方', value: 'above' },
+                              { label: isEnglish ? 'Below Table' : '表下方', value: 'below' },
+                            ]}
+                          />
+                        </Form.Item>
+                      </Space.Compact>
+                    </Form.Item>
+                    <ParagraphStyleFields form={form} baseName={['tableCaption']} copy={copy} isEnglish={isEnglish} />
+                  </Card>
+                </Col>
+                <Col span={24}>
+                  <Card size="small" title={copy.toc}>
+                    <Form.Item label={copy.checkMode}>
+                      <Form.Item name={['toc', 'mode']} noStyle>
+                        <Select
+                          style={{ width: 160 }}
+                          options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]}
+                        />
                       </Form.Item>
-                      <Form.Item name={['tableCaption', 'position']} noStyle>
-                        <Select disabled={Form.useWatch(['tableCaption', 'mode'], form) === 'none'} options={[{ label: '表上方', value: 'above' }, { label: '表下方', value: 'below' }]} />
-                      </Form.Item>
-                    </Space.Compact>
-                  </Form.Item>
+                    </Form.Item>
+                    <Row gutter={24}>
+                      <Col span={24}>
+                        <Card size="small" title={copy.tocTitle} style={{ marginBottom: 16 }}>
+                          <ParagraphStyleFields form={form} baseName={['toc', 'title']} copy={copy} isEnglish={isEnglish} />
+                        </Card>
+                      </Col>
+                      <Col span={24}>
+                        <Card size="small" title={copy.tocBody}>
+                          <ParagraphStyleFields form={form} baseName={['toc', 'body']} copy={copy} isEnglish={isEnglish} />
+                        </Card>
+                      </Col>
+                    </Row>
+                  </Card>
                 </Col>
               </Row>
+                    ),
+                  },
+                ].map((item) => ({
+                  ...item,
+                  forceRender: true,
+                }))}
+              />
 
               <div style={{ marginTop: 24, textAlign: 'center' }}>
-                <Button type="primary" htmlType="submit" size="large" loading={saving} style={{ width: 160 }}>
-                  {currentTemplate ? '保存修改' : '保存为模板'}
+                <Button data-testid="save-template-button" type="primary" htmlType="submit" size="large" loading={saving} style={{ width: 160 }}>
+                  {currentTemplate ? copy.saveEdit : copy.saveCreate}
                 </Button>
-                <Button size="large" style={{ marginLeft: 16 }} onClick={handleReset}>
-                  {currentTemplate ? '恢复当前模板' : '恢复默认值'}
+                <Button data-testid="reset-template-button" size="large" style={{ marginLeft: 16 }} onClick={handleReset}>
+                  {currentTemplate ? copy.resetEdit : copy.resetCreate}
                 </Button>
               </div>
             </Form>

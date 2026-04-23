@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import JSZip from 'jszip';
-import { XMLParser } from 'fast-xml-parser';
+import { XMLBuilder, XMLParser } from 'fast-xml-parser';
 import type { ParsedDocxModel, ParsedParagraph } from '../types/index.js';
 
 type XmlNode = Record<string, unknown>;
+type OrderedXmlNode = Record<string, unknown>;
 
 interface StyleDefinition {
   id: string;
@@ -23,6 +24,19 @@ const xmlParser = new XMLParser({
   attributeNamePrefix: '',
   trimValues: false,
   processEntities: false,
+});
+const orderedXmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  trimValues: false,
+  processEntities: false,
+  preserveOrder: true,
+});
+const orderedXmlBuilder = new XMLBuilder({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  suppressEmptyNode: true,
+  preserveOrder: true,
 });
 
 const getZipEntryText = async (zip: JSZip, targetPath: string): Promise<string | undefined> => {
@@ -50,6 +64,13 @@ const asArray = <T>(value: T | T[] | undefined): T[] => {
 
 const toXmlObject = (value: unknown): XmlNode | undefined =>
   value && typeof value === 'object' ? value as XmlNode : undefined;
+
+const toOrderedXmlNodes = (value: unknown): OrderedXmlNode[] =>
+  Array.isArray(value)
+    ? value
+      .map((item) => toXmlObject(item))
+      .filter(Boolean) as OrderedXmlNode[]
+    : [];
 
 const getWordAttr = (node: XmlNode | undefined, name: string): string | undefined => {
   if (!node) {
@@ -280,15 +301,74 @@ const extractParagraphText = (paragraphNode: XmlNode): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
-const extractDocumentParagraphTexts = (xml: string, rootKey: 'w:hdr' | 'w:ftr'): string[] => {
-  const root = xmlParser.parse(xml) as XmlNode;
-  const paragraphs = asArray(toXmlObject(root[rootKey])?.['w:p'])
-    .map((item) => toXmlObject(item))
+const getOrderedRootChildren = (
+  xml: string,
+  rootKey: 'w:document' | 'w:hdr' | 'w:ftr',
+  nestedKey?: 'w:body'
+): OrderedXmlNode[] => {
+  const parsed = orderedXmlParser.parse(xml) as OrderedXmlNode[];
+  const rootEntry = parsed.find((node) => Object.prototype.hasOwnProperty.call(node, rootKey));
+  if (!rootEntry) {
+    return [];
+  }
+
+  const rootChildren = toOrderedXmlNodes(rootEntry[rootKey]);
+  if (!nestedKey) {
+    return rootChildren;
+  }
+
+  const nestedEntry = rootChildren.find((node) => Object.prototype.hasOwnProperty.call(node, nestedKey));
+  return nestedEntry ? toOrderedXmlNodes(nestedEntry[nestedKey]) : [];
+};
+
+const collectOrderedParagraphEntries = (nodes: OrderedXmlNode[]): OrderedXmlNode[] => {
+  const paragraphs: OrderedXmlNode[] = [];
+
+  for (const node of nodes) {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'w:p') {
+        paragraphs.push({ [key]: toOrderedXmlNodes(value) });
+        continue;
+      }
+
+      paragraphs.push(...collectOrderedParagraphEntries(toOrderedXmlNodes(value)));
+    }
+  }
+
+  return paragraphs;
+};
+
+const extractOrderedParagraphNodes = (
+  xml: string,
+  rootKey: 'w:document' | 'w:hdr' | 'w:ftr',
+  nestedKey?: 'w:body'
+): XmlNode[] =>
+  collectOrderedParagraphEntries(getOrderedRootChildren(xml, rootKey, nestedKey))
+    .map((entry) => {
+      const paragraphXml = orderedXmlBuilder.build([entry]);
+      const parsed = xmlParser.parse(paragraphXml) as XmlNode;
+      return toXmlObject(parsed['w:p']);
+    })
     .filter(Boolean) as XmlNode[];
 
-  return paragraphs
+const extractDocumentParagraphTexts = (xml: string, rootKey: 'w:hdr' | 'w:ftr'): string[] => {
+  return extractOrderedParagraphNodes(xml, rootKey)
     .map((paragraphNode) => extractParagraphText(paragraphNode))
     .filter(Boolean);
+};
+
+const extractExternalParagraphs = (
+  xml: string,
+  rootKey: 'w:hdr' | 'w:ftr',
+  styleMap: Map<string, StyleDefinition>,
+  numberingMap: Map<string, NumberingDefinition>,
+  defaults: { fontFamily?: string; fontSizePt?: number }
+): ParsedParagraph[] => {
+  return extractOrderedParagraphNodes(xml, rootKey).map((paragraphNode, index) => ({
+    index: index + 1,
+    text: extractParagraphText(paragraphNode),
+    ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults),
+  }));
 };
 
 const parseHeadingLevel = (styleId: string | undefined, styleName: string | undefined, paragraphProperties?: XmlNode): number | undefined => {
@@ -415,7 +495,7 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
   const defaults = getDocumentDefaults(stylesRoot);
 
   const body = toXmlObject(toXmlObject(documentRoot['w:document'])?.['w:body']);
-  const paragraphNodes = asArray(toXmlObject(body)?.['w:p']).map((item) => toXmlObject(item)).filter(Boolean) as XmlNode[];
+  const paragraphNodes = extractOrderedParagraphNodes(documentXml, 'w:document', 'w:body');
   const paragraphs: ParsedParagraph[] = paragraphNodes.map((paragraphNode, index) => ({
     index: index + 1,
     text: extractParagraphText(paragraphNode),
@@ -459,6 +539,17 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
     headerTexts: headerContents
       .flatMap((header) => typeof header === 'string' ? extractDocumentParagraphTexts(header, 'w:hdr') : [])
       .filter(Boolean),
+    headerParagraphs: headerContents
+      .flatMap((header) => typeof header === 'string'
+        ? extractExternalParagraphs(header, 'w:hdr', styleMap, numberingMap, defaults)
+        : []),
+    footerTexts: footerContents
+      .flatMap((footer) => typeof footer === 'string' ? extractDocumentParagraphTexts(footer, 'w:ftr') : [])
+      .filter(Boolean),
+    footerParagraphs: footerContents
+      .flatMap((footer) => typeof footer === 'string'
+        ? extractExternalParagraphs(footer, 'w:ftr', styleMap, numberingMap, defaults)
+        : []),
     pageSize: widthCm && heightCm ? {
       widthCm,
       heightCm,

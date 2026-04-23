@@ -36,7 +36,9 @@ const toXmlObject = (value: unknown): XmlNode | undefined =>
   value && typeof value === 'object' ? value as XmlNode : undefined;
 const noRequirementToken = '无要求';
 const hasNoRequirement = (value: string | undefined | null): boolean =>
-  !value || value.trim() === '' || value.includes(noRequirementToken);
+  !value || value.trim() === '' || value.trim() === noRequirementToken;
+const includesNoRequirement = (value: string | undefined | null): boolean =>
+  !value || value.includes(noRequirementToken);
 
 const getWordAttr = (node: XmlNode | undefined, name: string): string | undefined => {
   if (!node) {
@@ -73,24 +75,27 @@ const fontSizeMap: Record<string, number> = {
 };
 
 const parseFontSizePt = (value: string): number | undefined => {
-  if (hasNoRequirement(value)) {
+  if (includesNoRequirement(value)) {
     return undefined;
   }
 
-  if (fontSizeMap[value]) {
-    return fontSizeMap[value];
+  const trimmed = value.trim();
+
+  if (fontSizeMap[trimmed]) {
+    return fontSizeMap[trimmed];
   }
 
-  const matchedToken = Object.keys(fontSizeMap).find((token) => value.includes(token));
+  const matchedToken = Object.keys(fontSizeMap).find((token) => trimmed.includes(token));
   if (matchedToken) {
     return fontSizeMap[matchedToken];
   }
 
-  if (value.toLowerCase().includes('pt')) {
-    return parseNumericSpec(value);
+  const unitMatch = trimmed.match(/(?:字号\s*=?\s*)?(\d+(?:\.\d+)?)\s*(pt|磅)\b/i);
+  if (unitMatch) {
+    return Number.parseFloat(unitMatch[1]);
   }
 
-  return parseNumericSpec(value);
+  return /^\d+(?:\.\d+)?$/.test(trimmed) ? Number.parseFloat(trimmed) : undefined;
 };
 
 const parseMarginRule = (value: string): { top?: number; bottom?: number; left?: number; right?: number } => {
@@ -156,7 +161,7 @@ const parseLineHeightRule = (value: string | number): { mode: 'multiple' | 'poin
 };
 
 const parseSpacingRule = (value: string): { before?: number; after?: number } => {
-  if (hasNoRequirement(value)) {
+  if (includesNoRequirement(value)) {
     return {};
   }
 
@@ -178,7 +183,7 @@ const parseSpacingRule = (value: string): { before?: number; after?: number } =>
 };
 
 const parseFirstLineIndentRule = (value: string): number | undefined => {
-  if (hasNoRequirement(value)) {
+  if (includesNoRequirement(value)) {
     return undefined;
   }
 
@@ -190,17 +195,39 @@ const parseFirstLineIndentRule = (value: string): number | undefined => {
   return parseNumericSpec(value);
 };
 
-const parseHeadingRules = (
-  value: string
-): Array<{
-  level: number;
+type ParagraphStyleRule = {
   font?: string;
   fontSizePt?: number;
   alignment?: 'left' | 'center' | 'right';
   lineHeight?: { mode: 'multiple' | 'points'; value: number };
   spacing?: { before?: number; after?: number };
   firstLineIndent?: number;
-}> =>
+};
+
+const parseParagraphStyleRule = (value: string, preferredKeywords: string[] = []): ParagraphStyleRule => {
+  const segment = preferredKeywords.length > 0 ? selectRuleSegment(value, preferredKeywords) : value;
+  const detailSegments = segment.split('|').map((item) => item.trim());
+  const fontSegment = detailSegments.find((item) => /字体/i.test(item)) ?? segment;
+  const sizeSegment = detailSegments.find((item) => /字号/i.test(item)) ?? segment;
+  const alignmentSegment = detailSegments.find((item) => /对齐|居中|居左|居右|left|center|right/i.test(item)) ?? segment;
+  const lineHeightSegment = detailSegments.find((item) => /行距|line/i.test(item)) ?? segment;
+  const spacingSegment = detailSegments.find((item) => /段前|段后|before|after/i.test(item)) ?? segment;
+  const indentSegment = detailSegments.find((item) => /首行缩进|字符|indent/i.test(item)) ?? segment;
+
+  return {
+    font: ['宋体', '黑体', '楷体', '仿宋', 'Times New Roman']
+      .find((alias) => fontSegment.toLowerCase().includes(alias.toLowerCase())),
+    fontSizePt: parseFontSizePt(sizeSegment),
+    alignment: parseAlignment(alignmentSegment),
+    lineHeight: parseLineHeightRule(lineHeightSegment),
+    spacing: parseSpacingRule(spacingSegment),
+    firstLineIndent: parseFirstLineIndentRule(indentSegment),
+  };
+};
+
+const parseHeadingRules = (
+  value: string
+): Array<ParagraphStyleRule & { level: number }> =>
   value
     .split(';')
     .map((item) => item.trim())
@@ -212,40 +239,27 @@ const parseHeadingRules = (
         return undefined;
       }
 
-      const font = ['宋体', '黑体', '楷体', '仿宋', 'Times New Roman']
-        .find((alias) => item.toLowerCase().includes(alias.toLowerCase()));
-
-      const detailSegments = item.split('|').map((segment) => segment.trim());
-      const alignmentSegment = detailSegments.find((segment) => /对齐|居中|居左|居右|left|center|right/i.test(segment)) ?? item;
-      const lineHeightSegment = detailSegments.find((segment) => /行距|line/i.test(segment)) ?? item;
-      const spacingSegment = detailSegments.find((segment) => /段前|段后|before|after/i.test(segment)) ?? item;
-      const indentSegment = detailSegments.find((segment) => /首行缩进|字符|indent/i.test(segment)) ?? item;
-
       return {
         level,
-        font,
-        fontSizePt: parseFontSizePt(item),
-        alignment: parseAlignment(alignmentSegment),
-        lineHeight: parseLineHeightRule(lineHeightSegment),
-        spacing: parseSpacingRule(spacingSegment),
-        firstLineIndent: parseFirstLineIndentRule(indentSegment),
+        ...parseParagraphStyleRule(item),
       };
     })
-    .filter(Boolean) as Array<{
-      level: number;
-      font?: string;
-      fontSizePt?: number;
-      alignment?: 'left' | 'center' | 'right';
-      lineHeight?: { mode: 'multiple' | 'points'; value: number };
-      spacing?: { before?: number; after?: number };
-      firstLineIndent?: number;
-    }>;
+    .filter(Boolean) as Array<ParagraphStyleRule & { level: number }>;
 
 const parseConfiguredTokens = (value: string | undefined): string[] =>
   (hasNoRequirement(value) ? '' : value ?? '')
     .split(/[;；]+/)
     .map((item) => item.trim())
     .filter(Boolean);
+
+const selectRuleSegment = (value: string, preferredKeywords: string[]): string => {
+  const segments = parseConfiguredTokens(value);
+  if (segments.length === 0) {
+    return value;
+  }
+
+  return segments.find((segment) => preferredKeywords.some((keyword) => segment.includes(keyword))) ?? segments[0];
+};
 
 const normalizeText = (value: string): string =>
   value
@@ -290,6 +304,9 @@ const createParagraphNode = (text: string, options?: {
   fontSizePt?: number;
   styleId?: string;
   alignment?: 'left' | 'center' | 'right';
+  lineHeight?: { mode: 'multiple' | 'points'; value: number };
+  spacing?: { before?: number; after?: number };
+  firstLineChars?: number;
 }): XmlNode => {
   const paragraphProperties: XmlNode = {};
   if (options?.styleId) {
@@ -298,6 +315,30 @@ const createParagraphNode = (text: string, options?: {
 
   if (options?.alignment) {
     paragraphProperties['w:jc'] = { 'w:val': options.alignment };
+  }
+
+  if (options?.lineHeight || options?.spacing) {
+    const spacingNode: XmlNode = {};
+    if (options.lineHeight) {
+      spacingNode['w:line'] = lineValueFromRule(options.lineHeight);
+      spacingNode['w:lineRule'] = options.lineHeight.mode === 'points' ? 'exact' : 'auto';
+    }
+
+    if (options.spacing?.before !== undefined) {
+      spacingNode['w:before'] = twipsFromPt(options.spacing.before);
+    }
+
+    if (options.spacing?.after !== undefined) {
+      spacingNode['w:after'] = twipsFromPt(options.spacing.after);
+    }
+
+    paragraphProperties['w:spacing'] = spacingNode;
+  }
+
+  if (options?.firstLineChars !== undefined) {
+    paragraphProperties['w:ind'] = {
+      'w:firstLineChars': firstLineCharsValue(options.firstLineChars),
+    };
   }
 
   const runProperties: XmlNode = {};
@@ -374,7 +415,14 @@ const ensureRunProperties = (runNode: XmlNode): XmlNode => {
   return created;
 };
 
-const replaceParagraphText = (paragraphNode: XmlNode, text: string, options?: { fontFamily?: string; fontSizePt?: number }): void => {
+const replaceParagraphText = (paragraphNode: XmlNode, text: string, options?: {
+  fontFamily?: string;
+  fontSizePt?: number;
+  alignment?: 'left' | 'center' | 'right';
+  lineHeight?: { mode: 'multiple' | 'points'; value: number };
+  spacing?: { before?: number; after?: number };
+  firstLineChars?: number;
+}): void => {
   const newParagraph = createParagraphNode(text, options);
   paragraphNode['w:r'] = newParagraph['w:r'];
   if (newParagraph['w:pPr']) {
@@ -683,7 +731,9 @@ const ensureHeaderAndFooter = async (
   }
 
   if (!hasNoRequirement(ruleConfig.pageNumberRule)) {
-    const footerAlignment = parseAlignment(ruleConfig.pageNumberRule ?? '') ?? 'center';
+    const footerAlignment = parseAlignment(
+      selectRuleSegment(ruleConfig.pageNumberRule ?? '', ['顶部', '底部', '页码'])
+    ) ?? 'center';
     const footerRelId = await ensureFooterPart(zip, relsRoot, contentTypesRoot, 1, footerAlignment);
     upsertReference(sectPr, 'w:footerReference', 'default', footerRelId);
   }
@@ -729,6 +779,33 @@ const getAbstractTitleRule = (
   };
 };
 
+const getCaptionRule = (value: string | undefined, prefix: '图' | '表'): ParagraphStyleRule & { position?: 'above' | 'below' } => {
+  const resolved = value ?? '';
+  return {
+    ...parseParagraphStyleRule(resolved, [`${prefix}题注`, '题注']),
+    position: resolved.includes('上方') ? 'above' : resolved.includes('下方') ? 'below' : undefined,
+  };
+};
+
+const getTocRule = (value: string | undefined): { title: ParagraphStyleRule; body: ParagraphStyleRule } => {
+  const resolved = value ?? '';
+  return {
+    title: parseParagraphStyleRule(resolved, ['目录标题', '标题']),
+    body: parseParagraphStyleRule(resolved, ['目录正文', '正文']),
+  };
+};
+
+const applyParagraphStyleRule = (paragraphNode: XmlNode, rule: ParagraphStyleRule): void => {
+  applyParagraphFormatting(paragraphNode, {
+    fontFamily: rule.font,
+    fontSizePt: rule.fontSizePt,
+    alignment: rule.alignment,
+    lineHeight: rule.lineHeight,
+    spacing: rule.spacing,
+    firstLineChars: rule.firstLineIndent,
+  });
+};
+
 const updateSectionPageLayout = (documentRoot: XmlNode, ruleConfig: PaperRuleConfig): void => {
   const sectPr = getSectionProperties(documentRoot);
   const pageSizeNode = toXmlObject(sectPr['w:pgSz']) ?? {};
@@ -763,13 +840,15 @@ const updateSectionPageLayout = (documentRoot: XmlNode, ruleConfig: PaperRuleCon
 const addMissingCoverFields = (paragraphNodes: XmlNode[], ruleConfig: PaperRuleConfig): XmlNode[] => {
   const missingNodes = parseConfiguredTokens(ruleConfig.coverItems)
     .filter((token) => !paragraphNodes.some((paragraphNode) => matchesToken(getParagraphText(paragraphNode), token)))
-    .map((token) => createParagraphNode(`${token}：待补充`, { fontFamily: '宋体', fontSizePt: 12 }));
+    .map((token) => createParagraphNode(token === '完成时间'
+      ? `完成时间：待补充（示例：${formatChineseYearMonth(new Date())}）`
+      : `${token}：待补充`, { fontFamily: '宋体', fontSizePt: 12 }));
 
   return missingNodes.length > 0 ? [...missingNodes, ...paragraphNodes] : paragraphNodes;
 };
 
 const ensureSection = (paragraphNodes: XmlNode[], title: string, bodyLines: string[]): XmlNode[] => {
-  if (paragraphNodes.some((paragraphNode) => matchesToken(getParagraphText(paragraphNode), title))) {
+  if (paragraphNodes.some((paragraphNode) => normalizeText(getParagraphText(paragraphNode)) === normalizeText(title))) {
     return paragraphNodes;
   }
 
@@ -778,6 +857,75 @@ const ensureSection = (paragraphNodes: XmlNode[], title: string, bodyLines: stri
     createParagraphNode(title, { fontFamily: '黑体', fontSizePt: 18, styleId: 'Heading1', alignment: 'center' }),
     ...bodyLines.map((line) => createParagraphNode(line, { fontFamily: '宋体', fontSizePt: 12 })),
   ];
+};
+
+const toChineseDigit = (digit: string): string => ({
+  '0': '〇',
+  '1': '一',
+  '2': '二',
+  '3': '三',
+  '4': '四',
+  '5': '五',
+  '6': '六',
+  '7': '七',
+  '8': '八',
+  '9': '九',
+}[digit] ?? digit);
+
+const formatChineseMonth = (month: number): string => {
+  if (month <= 10) {
+    return month === 10 ? '十' : toChineseDigit(String(month));
+  }
+
+  if (month < 20) {
+    return `十${toChineseDigit(String(month % 10))}`;
+  }
+
+  return `${toChineseDigit(String(Math.floor(month / 10)))}十${month % 10 === 0 ? '' : toChineseDigit(String(month % 10))}`;
+};
+
+const formatChineseYearMonth = (date: Date): string => {
+  const year = String(date.getFullYear()).split('').map((digit) => toChineseDigit(digit)).join('');
+  const month = formatChineseMonth(date.getMonth() + 1);
+  return `${year}年${month}月`;
+};
+
+const sectionPlaceholderBodies: Record<string, string[]> = {
+  毕业论文原创性声明: [
+    '本人郑重声明：本论文为本人在指导教师指导下独立完成。',
+    '作者手写电子签名：待补充    日期：待补充',
+  ],
+  致谢: [
+    '请在此补充致谢内容。',
+  ],
+  参考文献: [
+    '[1] 待补充参考文献',
+  ],
+  图清单: [
+    '图1.1 待补充图题注........................1',
+  ],
+  表清单: [
+    '表1.1 待补充表题注........................1',
+  ],
+  指导教师指导意见表: [
+    '指导教师指导意见：待补充',
+    '指导教师签名：待补充    日期：待补充',
+  ],
+  评阅教师评阅意见表: [
+    '评阅教师评阅意见：待补充',
+    '评阅教师签名：待补充    日期：待补充',
+  ],
+};
+
+const ensureConfiguredSections = (paragraphNodes: XmlNode[], ruleConfig: PaperRuleConfig): XmlNode[] => {
+  let nextParagraphNodes = paragraphNodes;
+
+  for (const token of parseConfiguredTokens(ruleConfig.requiredSections)) {
+    const bodyLines = sectionPlaceholderBodies[token] ?? [`请在此补充${token}内容。`];
+    nextParagraphNodes = ensureSection(nextParagraphNodes, token, bodyLines);
+  }
+
+  return nextParagraphNodes;
 };
 
 const normalizeKeywordsLine = (text: string): string => {
@@ -794,6 +942,17 @@ const normalizeKeywordsLine = (text: string): string => {
   return `关键词：${normalizedTokens.join('；')}`;
 };
 
+const looksLikeTocEntry = (text: string): boolean => {
+  const resolved = text.trim();
+  if (!resolved) {
+    return false;
+  }
+
+  return /([\.·…]{2,}|\s{2,}|\t)+\d+$/.test(resolved)
+    || /^[0-9一二三四五六七八九十]+(\.[0-9]+)*\s+\S+.+\d+$/.test(resolved)
+    || /^第[一二三四五六七八九十百]+[章节部分篇]\s+\S+.+\d+$/.test(resolved);
+};
+
 const buildPlaceholderAbstractBody = (): string => {
   const base = '本摘要为系统自动补齐的占位内容，请根据论文研究目的、方法、结果与结论进一步完善。';
   let text = base;
@@ -806,13 +965,33 @@ const buildPlaceholderAbstractBody = (): string => {
 
 const ensureAbstractAndKeywords = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxModel, ruleConfig: PaperRuleConfig): XmlNode[] => {
   const nextParagraphs = [...paragraphNodes];
-  const abstractIndex = parsedDocument.paragraphs.findIndex((paragraph) => /^(摘要|abstract)$/i.test(paragraph.text.trim()));
-  const keywordIndex = parsedDocument.paragraphs.findIndex((paragraph) => /(关键词|keywords?)/i.test(paragraph.text));
+  const abstractIndex = parsedDocument.paragraphs.findIndex((paragraph) => matchesToken(paragraph.text, '摘要') || matchesToken(paragraph.text, 'abstract'));
+  const keywordIndex = parsedDocument.paragraphs.findIndex((paragraph) => /(关\s*键\s*词|keywords?)/i.test(paragraph.text));
+  const bodyFont = hasNoRequirement(ruleConfig.bodyFont) ? undefined : ruleConfig.bodyFont;
+  const bodyFontSize = parseFontSizePt(ruleConfig.bodyFontSize);
+  const bodyLineHeight = parseLineHeightRule(ruleConfig.lineHeight);
+  const bodySpacing = parseSpacingRule(ruleConfig.paragraphSpacing);
+  const abstractTitleRule = getAbstractTitleRule(ruleConfig);
 
   if (abstractIndex < 0) {
-    nextParagraphs.push(createParagraphNode('摘要', { fontFamily: '黑体', fontSizePt: 18, styleId: 'Heading1', alignment: 'center' }));
-    nextParagraphs.push(createParagraphNode(buildPlaceholderAbstractBody(), { fontFamily: ruleConfig.bodyFont, fontSizePt: parseFontSizePt(ruleConfig.bodyFontSize) }));
-    nextParagraphs.push(createParagraphNode('关键词：待补充关键词1；待补充关键词2；待补充关键词3', { fontFamily: ruleConfig.bodyFont, fontSizePt: parseFontSizePt(ruleConfig.bodyFontSize) }));
+    nextParagraphs.push(createParagraphNode('摘要', {
+      fontFamily: abstractTitleRule.font ?? '黑体',
+      fontSizePt: abstractTitleRule.fontSizePt ?? 18,
+      styleId: 'Heading1',
+      alignment: abstractTitleRule.alignment ?? 'center',
+    }));
+    nextParagraphs.push(createParagraphNode(buildPlaceholderAbstractBody(), {
+      fontFamily: bodyFont,
+      fontSizePt: bodyFontSize,
+      lineHeight: bodyLineHeight,
+      spacing: bodySpacing,
+    }));
+    nextParagraphs.push(createParagraphNode('关键词：待补充关键词1；待补充关键词2；待补充关键词3', {
+      fontFamily: bodyFont,
+      fontSizePt: bodyFontSize,
+      lineHeight: bodyLineHeight,
+      spacing: bodySpacing,
+    }));
     return nextParagraphs;
   }
 
@@ -827,29 +1006,111 @@ const ensureAbstractAndKeywords = (paragraphNodes: XmlNode[], parsedDocument: Pa
 
   if (abstractBodyIndexes.length > 0 && currentLength < 300) {
     replaceParagraphText(nextParagraphs[abstractBodyIndexes[0]], buildPlaceholderAbstractBody(), {
-      fontFamily: ruleConfig.bodyFont,
-      fontSizePt: parseFontSizePt(ruleConfig.bodyFontSize),
+      fontFamily: bodyFont,
+      fontSizePt: bodyFontSize,
+      lineHeight: bodyLineHeight,
+      spacing: bodySpacing,
     });
   } else if (abstractBodyIndexes.length === 0) {
     nextParagraphs.splice(abstractIndex + 1, 0, createParagraphNode(buildPlaceholderAbstractBody(), {
-      fontFamily: ruleConfig.bodyFont,
-      fontSizePt: parseFontSizePt(ruleConfig.bodyFontSize),
+      fontFamily: bodyFont,
+      fontSizePt: bodyFontSize,
+      lineHeight: bodyLineHeight,
+      spacing: bodySpacing,
     }));
   }
 
   const resolvedKeywordIndex = keywordIndex >= 0 ? keywordIndex : abstractIndex + 2;
   if (keywordIndex >= 0 && nextParagraphs[keywordIndex]) {
     replaceParagraphText(nextParagraphs[keywordIndex], normalizeKeywordsLine(getParagraphText(nextParagraphs[keywordIndex])), {
-      fontFamily: ruleConfig.bodyFont,
-      fontSizePt: parseFontSizePt(ruleConfig.bodyFontSize),
+      fontFamily: bodyFont,
+      fontSizePt: bodyFontSize,
+      lineHeight: bodyLineHeight,
+      spacing: bodySpacing,
     });
   } else {
     nextParagraphs.splice(Math.min(resolvedKeywordIndex, nextParagraphs.length), 0, createParagraphNode('关键词：待补充关键词1；待补充关键词2；待补充关键词3', {
-      fontFamily: ruleConfig.bodyFont,
-      fontSizePt: parseFontSizePt(ruleConfig.bodyFontSize),
+      fontFamily: bodyFont,
+      fontSizePt: bodyFontSize,
+      lineHeight: bodyLineHeight,
+      spacing: bodySpacing,
     }));
   }
 
+  return nextParagraphs;
+};
+
+const ensureTableOfContents = (paragraphNodes: XmlNode[], ruleConfig: PaperRuleConfig): XmlNode[] => {
+  if (hasNoRequirement(ruleConfig.tocRule)) {
+    return paragraphNodes;
+  }
+
+  const nextParagraphs = [...paragraphNodes];
+  const tocRule = getTocRule(ruleConfig.tocRule);
+  const titleIndex = nextParagraphs.findIndex((paragraphNode) => matchesToken(getParagraphText(paragraphNode), '目录'));
+
+  const buildTitleNode = (): XmlNode => {
+    const node = createParagraphNode('目录', {
+      fontFamily: tocRule.title.font ?? '黑体',
+      fontSizePt: tocRule.title.fontSizePt ?? 18,
+      alignment: tocRule.title.alignment ?? 'center',
+      styleId: 'Heading1',
+    });
+    applyParagraphStyleRule(node, tocRule.title);
+    return node;
+  };
+
+  const buildEntryNode = (text: string): XmlNode => {
+    const node = createParagraphNode(text, {
+      fontFamily: tocRule.body.font ?? '宋体',
+      fontSizePt: tocRule.body.fontSizePt ?? 12,
+      alignment: tocRule.body.alignment,
+    });
+    applyParagraphStyleRule(node, tocRule.body);
+    return node;
+  };
+
+  const fallbackEntries = [
+    '1 摘要........................1',
+    '2 参考文献........................2',
+  ];
+
+  if (titleIndex < 0) {
+    return [
+      ...nextParagraphs,
+      buildTitleNode(),
+      ...fallbackEntries.map((text) => buildEntryNode(text)),
+    ];
+  }
+
+  applyParagraphStyleRule(nextParagraphs[titleIndex], tocRule.title);
+
+  const existingEntries: XmlNode[] = [];
+  for (const paragraphNode of nextParagraphs.slice(titleIndex + 1)) {
+    const text = getParagraphText(paragraphNode);
+    if (!text.trim()) {
+      if (existingEntries.length > 0) {
+        break;
+      }
+      continue;
+    }
+
+    if (looksLikeTocEntry(text)) {
+      existingEntries.push(paragraphNode);
+      continue;
+    }
+
+    if (existingEntries.length > 0) {
+      break;
+    }
+  }
+
+  if (existingEntries.length === 0) {
+    nextParagraphs.splice(titleIndex + 1, 0, ...fallbackEntries.map((text) => buildEntryNode(text)));
+    return nextParagraphs;
+  }
+
+  existingEntries.forEach((paragraphNode) => applyParagraphStyleRule(paragraphNode, tocRule.body));
   return nextParagraphs;
 };
 
@@ -882,10 +1143,11 @@ const extractCaptionToken = (text: string, prefix: '图' | '表'): string | unde
 const isValidCaption = (text: string, prefix: '图' | '表'): boolean =>
   new RegExp(`^${prefix}\\s*\\d+(?:\\.\\d+)*\\s+\\S+`).test(text.trim());
 
-const repairCaptions = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxModel): XmlNode[] => {
+const repairCaptions = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxModel, ruleConfig: PaperRuleConfig): XmlNode[] => {
   const nextParagraphs = [...paragraphNodes];
 
   for (const prefix of ['图', '表'] as const) {
+    const captionRule = getCaptionRule(prefix === '图' ? ruleConfig.figureCaptionRule : ruleConfig.tableCaptionRule, prefix);
     const existingCaptionTokens = new Set<string>();
 
     nextParagraphs.forEach((paragraphNode) => {
@@ -897,8 +1159,20 @@ const repairCaptions = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxMod
 
       existingCaptionTokens.add(token);
       if (!isValidCaption(text, prefix)) {
-        replaceParagraphText(paragraphNode, `${token} 待补充题注`, { fontFamily: '宋体', fontSizePt: 10.5 });
+        replaceParagraphText(paragraphNode, `${token} 待补充题注`, {
+          fontFamily: captionRule.font ?? '宋体',
+          fontSizePt: captionRule.fontSizePt ?? 10.5,
+        });
       }
+
+      applyParagraphFormatting(paragraphNode, {
+        fontFamily: captionRule.font,
+        fontSizePt: captionRule.fontSizePt,
+        alignment: captionRule.alignment,
+        lineHeight: captionRule.lineHeight,
+        spacing: captionRule.spacing,
+        firstLineChars: captionRule.firstLineIndent,
+      });
     });
 
     const referencedTokens = collectReferencedTokens(parsedDocument.paragraphs, prefix);
@@ -908,7 +1182,20 @@ const repairCaptions = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxMod
       }
 
       const insertIndex = Math.min(reference.index, nextParagraphs.length);
-      nextParagraphs.splice(insertIndex, 0, createParagraphNode(`${reference.token} 待补充题注`, { fontFamily: '宋体', fontSizePt: 10.5, alignment: prefix === '表' ? 'center' : 'center' }));
+      const newCaption = createParagraphNode(`${reference.token} 待补充题注`, {
+        fontFamily: captionRule.font ?? '宋体',
+        fontSizePt: captionRule.fontSizePt ?? 10.5,
+        alignment: captionRule.alignment ?? 'center',
+      });
+      applyParagraphFormatting(newCaption, {
+        fontFamily: captionRule.font,
+        fontSizePt: captionRule.fontSizePt,
+        alignment: captionRule.alignment,
+        lineHeight: captionRule.lineHeight,
+        spacing: captionRule.spacing,
+        firstLineChars: captionRule.firstLineIndent,
+      });
+      nextParagraphs.splice(insertIndex, 0, newCaption);
       existingCaptionTokens.add(reference.token);
     }
   }
@@ -933,7 +1220,7 @@ const applyParagraphLevelFixes = (paragraphNodes: XmlNode[], parsedDocument: Par
 
     const text = parsedParagraph.text;
 
-    if (/^(摘要|abstract)$/i.test(text)) {
+    if (matchesToken(text, '摘要') || matchesToken(text, 'abstract')) {
       applyParagraphFormatting(paragraphNode, {
         fontFamily: abstractTitleRule.font,
         fontSizePt: abstractTitleRule.fontSizePt,
@@ -942,7 +1229,7 @@ const applyParagraphLevelFixes = (paragraphNodes: XmlNode[], parsedDocument: Par
       return;
     }
 
-    if (/(关键词|keywords?)/i.test(text)) {
+    if (/(关\s*键\s*词|keywords?)/i.test(text)) {
       replaceParagraphText(paragraphNode, normalizeKeywordsLine(text), { fontFamily: bodyFont, fontSizePt: bodyFontSize });
       return;
     }
@@ -996,18 +1283,11 @@ export const createFixedDocumentDownload = async (input: {
   let paragraphNodes = getBodyParagraphNodes(documentRoot);
   applyParagraphLevelFixes(paragraphNodes, input.parsedDocument, input.ruleConfig);
   paragraphNodes = ensureAbstractAndKeywords(paragraphNodes, input.parsedDocument, input.ruleConfig);
-  paragraphNodes = repairCaptions(paragraphNodes, input.parsedDocument);
+  paragraphNodes = ensureTableOfContents(paragraphNodes, input.ruleConfig);
+  paragraphNodes = repairCaptions(paragraphNodes, input.parsedDocument, input.ruleConfig);
   paragraphNodes = addMissingCoverFields(paragraphNodes, input.ruleConfig);
-  paragraphNodes = ensureSection(paragraphNodes, '毕业论文原创性声明', [
-    '本人郑重声明：本论文为本人在指导教师指导下独立完成。',
-    '作者手写电子签名：待补充    日期：待补充',
-  ]);
-  paragraphNodes = ensureSection(paragraphNodes, '致谢', [
-    '请在此补充致谢内容。',
-  ]);
-  paragraphNodes = ensureSection(paragraphNodes, '参考文献', [
-    '[1] 待补充参考文献',
-  ]);
+  paragraphNodes = ensureConfiguredSections(paragraphNodes, input.ruleConfig);
+  paragraphNodes = ensureSection(paragraphNodes, '参考文献', sectionPlaceholderBodies.参考文献);
   setBodyParagraphNodes(documentRoot, paragraphNodes);
 
   zip.file('word/document.xml', buildXml(documentRoot));

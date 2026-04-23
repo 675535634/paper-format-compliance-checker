@@ -1,13 +1,25 @@
 import { useEffect, useState } from 'react';
-import { Table, Card, Button, Space, Tag, Popconfirm, message, Typography } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
-import { api } from '../../api';
-import type { RuleTemplate } from '../../types';
+import {
+  Button,
+  Card,
+  Popconfirm,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../../api';
+import { useI18n } from '../../i18n';
+import type { RuleTemplate } from '../../types';
 
 const { Paragraph } = Typography;
 
 const TemplatesManage: React.FC = () => {
+  const { isEnglish } = useI18n();
   const [templates, setTemplates] = useState<RuleTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
@@ -19,7 +31,7 @@ const TemplatesManage: React.FC = () => {
       const data = await api.getTemplates();
       setTemplates(data);
     } catch {
-      message.error('获取模板失败');
+      message.error(isEnglish ? 'Failed to load templates.' : '模板加载失败。');
     } finally {
       setLoading(false);
     }
@@ -29,7 +41,7 @@ const TemplatesManage: React.FC = () => {
     void fetchTemplates();
   }, []);
 
-  const withTemplateAction = async (templateId: string, action: () => Promise<void>) => {
+  const runAction = async (templateId: string, action: () => Promise<void>) => {
     setActiveTemplateId(templateId);
     try {
       await action();
@@ -41,70 +53,114 @@ const TemplatesManage: React.FC = () => {
   const handleDelete = async (id: string) => {
     try {
       await api.deleteTemplate(id);
-      message.success('模板已删除');
+      message.success(isEnglish ? 'Template deleted.' : '模板已删除。');
       await fetchTemplates();
     } catch {
-      message.error('删除模板失败');
+      message.error(isEnglish ? 'Failed to delete the template.' : '删除模板失败。');
     }
   };
 
   const handleCopy = async (id: string) => {
     try {
       await api.copyTemplate(id);
-      message.success('模板已复制');
+      message.success(isEnglish ? 'Template copied.' : '模板已复制。');
       await fetchTemplates();
     } catch {
-      message.error('复制模板失败');
+      message.error(isEnglish ? 'Failed to copy the template.' : '复制模板失败。');
     }
   };
 
   const handleApply = async (id: string) => {
     try {
       await api.applyTemplate(id);
-      message.success('已设为默认模板，并跳转到检测页');
+      message.success(isEnglish ? 'Default template updated.' : '默认模板已更新。');
       await fetchTemplates();
       navigate(`/check?templateId=${encodeURIComponent(id)}`);
     } catch {
-      message.error('应用模板失败');
+      message.error(isEnglish ? 'Failed to apply this template.' : '应用模板失败。');
+    }
+  };
+
+  const handleVisibilityChange = async (template: RuleTemplate, checked: boolean) => {
+    try {
+      await api.updateTemplateVisibility(template.id, checked ? 'public' : 'private');
+      message.success(
+        checked
+          ? isEnglish ? 'Template is now public.' : '模板已公开。'
+          : isEnglish ? 'Template is now private.' : '模板已设为私有。'
+      );
+      await fetchTemplates();
+    } catch {
+      message.error(isEnglish ? 'Failed to update visibility.' : '更新可见性失败。');
     }
   };
 
   const columns = [
     {
-      title: '模板名称',
+      title: isEnglish ? 'Template' : '模板',
       dataIndex: 'name',
       key: 'name',
-      render: (text: string, record: RuleTemplate) => (
-        <Space>
-          <span style={{ fontWeight: 500 }}>{text}</span>
-          {record.isDefault && <Tag color="blue">默认</Tag>}
+      render: (_text: string, record: RuleTemplate) => (
+        <Space direction="vertical" size={4}>
+          <Space>
+            <span style={{ fontWeight: 600 }}>{record.name}</span>
+            {record.isDefault && <Tag color="blue">{isEnglish ? 'Default' : '默认'}</Tag>}
+            <Tag color={record.visibility === 'public' ? 'green' : 'default'}>
+              {record.visibility === 'public'
+                ? isEnglish ? 'Public' : '公开'
+                : isEnglish ? 'Private' : '私有'}
+            </Tag>
+          </Space>
+          <span style={{ color: '#8c8c8c' }}>{record.description || (isEnglish ? 'No description yet.' : '暂未填写说明。')}</span>
         </Space>
       ),
     },
     {
-      title: '说明',
-      dataIndex: 'description',
-      key: 'description',
-      render: (text: string) => text || '-',
+      title: isEnglish ? 'Shared' : '共享',
+      key: 'visibility',
+      width: 180,
+      render: (_: unknown, record: RuleTemplate) => (
+        <Switch
+          checked={record.visibility === 'public'}
+          checkedChildren={isEnglish ? 'Public' : '公开'}
+          unCheckedChildren={isEnglish ? 'Private' : '私有'}
+          loading={activeTemplateId === record.id}
+          onChange={(checked) => void runAction(record.id, () => handleVisibilityChange(record, checked))}
+        />
+      ),
     },
     {
-      title: '更新时间',
+      title: isEnglish ? 'Activity' : '热度',
+      key: 'activity',
+      width: 220,
+      render: (_: unknown, record: RuleTemplate) => (
+        <Space wrap>
+          <Tag>{isEnglish ? `Favorites ${record.favoriteCount}` : `收藏 ${record.favoriteCount}`}</Tag>
+          <Tag>{isEnglish ? `Uses ${record.useCount}` : `使用 ${record.useCount}`}</Tag>
+          <Tag>{isEnglish ? `Hot ${record.hotScore}` : `热度 ${record.hotScore}`}</Tag>
+        </Space>
+      ),
+    },
+    {
+      title: isEnglish ? 'Updated' : '更新时间',
       dataIndex: 'updatedAt',
       key: 'updatedAt',
+      width: 180,
       render: (value: string) => value.replace('T', ' ').slice(0, 19),
     },
     {
-      title: '操作',
-      key: 'action',
+      title: isEnglish ? 'Actions' : '操作',
+      key: 'actions',
+      width: 260,
       render: (_: unknown, record: RuleTemplate) => (
-        <Space size="middle">
+        <Space size="small" wrap>
           <Button
             type="link"
             size="small"
             loading={activeTemplateId === record.id}
-            onClick={() => void withTemplateAction(record.id, () => handleApply(record.id))}
+            onClick={() => void runAction(record.id, () => handleApply(record.id))}
           >
-            应用
+            {isEnglish ? 'Use' : '使用'}
           </Button>
           <Button
             type="link"
@@ -112,26 +168,32 @@ const TemplatesManage: React.FC = () => {
             icon={<EditOutlined />}
             onClick={() => navigate(`/rules?templateId=${encodeURIComponent(record.id)}`)}
           >
-            编辑
+            {isEnglish ? 'Edit' : '编辑'}
           </Button>
           <Button
             type="link"
             size="small"
             icon={<CopyOutlined />}
             loading={activeTemplateId === record.id}
-            onClick={() => void withTemplateAction(record.id, () => handleCopy(record.id))}
+            onClick={() => void runAction(record.id, () => handleCopy(record.id))}
           >
-            复制
+            {isEnglish ? 'Copy' : '复制'}
           </Button>
           {!record.isDefault && (
             <Popconfirm
-              title="确定要删除这个模板吗？"
-              okText="删除"
-              cancelText="取消"
-              onConfirm={() => void withTemplateAction(record.id, () => handleDelete(record.id))}
+              title={isEnglish ? 'Delete this template?' : '确认删除这个模板吗？'}
+              okText={isEnglish ? 'Delete' : '删除'}
+              cancelText={isEnglish ? 'Cancel' : '取消'}
+              onConfirm={() => void runAction(record.id, () => handleDelete(record.id))}
             >
-              <Button type="link" danger size="small" icon={<DeleteOutlined />} loading={activeTemplateId === record.id}>
-                删除
+              <Button
+                type="link"
+                danger
+                size="small"
+                icon={<DeleteOutlined />}
+                loading={activeTemplateId === record.id}
+              >
+                {isEnglish ? 'Delete' : '删除'}
               </Button>
             </Popconfirm>
           )}
@@ -144,19 +206,21 @@ const TemplatesManage: React.FC = () => {
     <div data-testid="page-templates">
       <Card
         variant="borderless"
-        title={<span style={{ fontSize: 20 }}>模板管理</span>}
-        extra={
-          <Button data-testid="create-template-button" type="primary" icon={<PlusOutlined />} onClick={() => navigate('/rules')}>
-            新建模板
+        title={<span style={{ fontSize: 20 }}>{isEnglish ? 'My Templates' : '我的模板'}</span>}
+        extra={(
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/rules')}>
+            {isEnglish ? 'New Template' : '新建模板'}
           </Button>
-          
-        }
+        )}
       >
         <Paragraph type="secondary" style={{ marginTop: -4 }}>
-          可以在这里维护学校模板、专业模板或个人常用模板，并将其中一个模板设为默认检测规则。
+          {isEnglish
+            ? 'Manage your own templates here. New templates are private by default, and you can publish any of them to the public gallery at any time.'
+            : '这里管理你自己的模板。新建模板默认私有，你可以随时把其中任意模板公开到模板广场。'}
         </Paragraph>
 
         <Table
+          data-testid="templates-table"
           columns={columns}
           dataSource={templates}
           rowKey="id"

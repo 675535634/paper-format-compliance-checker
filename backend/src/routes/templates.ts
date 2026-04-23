@@ -7,18 +7,23 @@ import {
   deleteTemplate,
   getTemplateById,
   listTemplates,
+  updateTemplateVisibility,
   updateTemplate,
 } from '../services/template-service.js';
-import { createTemplateSchema, updateTemplateSchema } from '../services/validation-service.js';
+import {
+  createTemplateSchema,
+  updateTemplateSchema,
+  updateTemplateVisibilitySchema,
+} from '../services/validation-service.js';
 
 export const templatesRouter = Router();
 
-templatesRouter.get('/', async (_request, response) => {
-  response.json(await listTemplates());
+templatesRouter.get('/', async (request, response) => {
+  response.json(await listTemplates(request.currentUser!.id));
 });
 
 templatesRouter.get('/:id', async (request, response) => {
-  const template = await getTemplateById(request.params.id);
+  const template = await getTemplateById(request.params.id, request.currentUser!.id);
   if (!template) {
     throw new HttpError(404, `Template ${request.params.id} was not found.`);
   }
@@ -28,13 +33,13 @@ templatesRouter.get('/:id', async (request, response) => {
 
 templatesRouter.post('/', async (request, response) => {
   const payload = createTemplateSchema.parse(request.body);
-  const template = await createTemplate(payload);
+  const template = await createTemplate(request.currentUser!.id, payload);
   response.status(201).json(template);
 });
 
 templatesRouter.put('/:id', async (request, response) => {
   const payload = updateTemplateSchema.parse(request.body);
-  const template = await updateTemplate(request.params.id, payload);
+  const template = await updateTemplate(request.params.id, request.currentUser!.id, payload);
   if (!template) {
     throw new HttpError(404, `Template ${request.params.id} was not found.`);
   }
@@ -43,7 +48,7 @@ templatesRouter.put('/:id', async (request, response) => {
 });
 
 templatesRouter.delete('/:id', async (request, response) => {
-  const deleted = await deleteTemplate(request.params.id);
+  const deleted = await deleteTemplate(request.params.id, request.currentUser!.id);
   if (!deleted) {
     throw new HttpError(404, `Template ${request.params.id} was not found.`);
   }
@@ -52,7 +57,7 @@ templatesRouter.delete('/:id', async (request, response) => {
 });
 
 templatesRouter.post('/:id/copy', async (request, response) => {
-  const template = await copyTemplate(request.params.id);
+  const template = await copyTemplate(request.params.id, request.currentUser!.id);
   if (!template) {
     throw new HttpError(404, `Template ${request.params.id} was not found.`);
   }
@@ -61,7 +66,17 @@ templatesRouter.post('/:id/copy', async (request, response) => {
 });
 
 templatesRouter.post('/:id/apply', async (request, response) => {
-  const template = await applyTemplateAsDefault(request.params.id);
+  const template = await applyTemplateAsDefault(request.params.id, request.currentUser!.id);
+  if (!template) {
+    throw new HttpError(404, `Template ${request.params.id} was not found.`);
+  }
+
+  response.json(template);
+});
+
+templatesRouter.patch('/:id/visibility', async (request, response) => {
+  const payload = updateTemplateVisibilitySchema.parse(request.body);
+  const template = await updateTemplateVisibility(request.params.id, request.currentUser!.id, payload);
   if (!template) {
     throw new HttpError(404, `Template ${request.params.id} was not found.`);
   }

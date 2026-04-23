@@ -18,6 +18,7 @@ export const paperRuleConfigSchema = z.object({
   referenceFormat: z.string().min(1),
   figureCaptionRule: z.string().default(''),
   tableCaptionRule: z.string().default(''),
+  tocRule: z.string().default(''),
 });
 
 export const createTemplateSchema = z.object({
@@ -25,6 +26,7 @@ export const createTemplateSchema = z.object({
   description: z.string().max(400).default(''),
   config: paperRuleConfigSchema,
   isDefault: z.boolean().optional().default(false),
+  visibility: z.enum(['private', 'public']).optional().default('private'),
 });
 
 export const updateTemplateSchema = createTemplateSchema.partial().refine(
@@ -41,6 +43,33 @@ export const createCheckSchema = z.object({
   { message: 'Either templateId or inlineRuleConfig is required.' }
 );
 
+export const registerSchema = z.object({
+  username: z.string().trim().min(3).max(32),
+  email: z.email(),
+  password: z.string().min(6).max(128),
+  displayName: z.string().trim().min(1).max(64).optional(),
+});
+
+export const loginSchema = z.object({
+  identifier: z.string().trim().min(1).max(120),
+  password: z.string().min(1).max(128),
+});
+
+export const listPublicTemplatesSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(12),
+  query: z.string().trim().max(120).optional().default(''),
+  sort: z.enum(['latest', 'hottest', 'favorites', 'uses']).optional().default('hottest'),
+});
+
+export const updateTemplateVisibilitySchema = z.object({
+  visibility: z.enum(['private', 'public']),
+});
+
 export type CreateTemplateInput = z.infer<typeof createTemplateSchema>;
 export type UpdateTemplateInput = z.infer<typeof updateTemplateSchema>;
 export type CreateCheckInput = z.infer<typeof createCheckSchema>;
+export type RegisterInput = z.infer<typeof registerSchema>;
+export type LoginInput = z.infer<typeof loginSchema>;
+export type ListPublicTemplatesInput = z.infer<typeof listPublicTemplatesSchema>;
+export type UpdateTemplateVisibilityInput = z.infer<typeof updateTemplateVisibilitySchema>;

@@ -6,11 +6,13 @@ import { api } from '../../api';
 import type { RuleTemplate } from '../../types';
 import { useAppStore } from '../../store';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useI18n } from '../../i18n';
 
 const { Title, Text, Paragraph } = Typography;
 const { Dragger } = Upload;
 
 const CheckPaper: React.FC = () => {
+  const { isEnglish } = useI18n();
   const [templates, setTemplates] = useState<RuleTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [checking, setChecking] = useState(false);
@@ -45,7 +47,7 @@ const CheckPaper: React.FC = () => {
           setSelectedTemplate(data[0].id);
         }
       } catch {
-        message.error('获取模板失败');
+        message.error(isEnglish ? 'Failed to load templates.' : '获取模板失败');
       }
     };
 
@@ -58,15 +60,21 @@ const CheckPaper: React.FC = () => {
     }
 
     if (restoredPaperNoticeVisible && restoredResultNoticeVisible && currentPaper && currentResult) {
-      return `已恢复最近上传的论文“${currentPaper.filename}”以及对应检测结果。你可以继续检测，或直接回到最近结果页。`;
+      return isEnglish
+        ? `Restored the latest uploaded paper "${currentPaper.filename}" together with its check result. You can continue checking or jump straight back to the latest result page.`
+        : `已恢复最近上传的论文“${currentPaper.filename}”以及对应检测结果。你可以继续检测，或直接回到最近结果页。`;
     }
 
     if (restoredPaperNoticeVisible && currentPaper) {
-      return `已恢复最近上传的论文“${currentPaper.filename}”。你可以继续使用它检测，也可以清除后重新上传。`;
+      return isEnglish
+        ? `Restored the latest uploaded paper "${currentPaper.filename}". You can continue with it or clear the local context and upload again.`
+        : `已恢复最近上传的论文“${currentPaper.filename}”。你可以继续使用它检测，也可以清除后重新上传。`;
     }
 
     if (restoredResultNoticeVisible && currentResult) {
-      return '已恢复最近一次检测结果上下文。你可以直接查看结果，也可以清除本地记录后重新开始。';
+      return isEnglish
+        ? 'Restored the latest check result context. You can open the result directly or clear the local record and start again.'
+        : '已恢复最近一次检测结果上下文。你可以直接查看结果，也可以清除本地记录后重新开始。';
     }
 
     return '';
@@ -74,6 +82,7 @@ const CheckPaper: React.FC = () => {
     currentPaper,
     currentResult,
     hasHydrated,
+    isEnglish,
     restoredPaperNoticeVisible,
     restoredResultNoticeVisible,
   ]);
@@ -89,7 +98,7 @@ const CheckPaper: React.FC = () => {
     beforeUpload: (file) => {
       const isDocx = file.name.toLowerCase().endsWith('.docx');
       if (!isDocx) {
-        message.error(`${file.name} 不是 .docx 文件，请上传 Word 文档。`);
+        message.error(isEnglish ? `${file.name} is not a .docx file. Please upload a Word document.` : `${file.name} 不是 .docx 文件，请上传 Word 文档。`);
         return Upload.LIST_IGNORE;
       }
 
@@ -100,10 +109,10 @@ const CheckPaper: React.FC = () => {
         const uploaded = await api.uploadPaper(file as File);
         setCurrentPaper(uploaded);
         onSuccess?.('ok');
-        message.success(`${uploaded.filename} 上传成功`);
+        message.success(isEnglish ? `${uploaded.filename} uploaded successfully.` : `${uploaded.filename} 上传成功`);
       } catch (error) {
         onError?.(error as Error);
-        message.error('文件上传失败');
+        message.error(isEnglish ? 'Upload failed.' : '文件上传失败');
       }
     },
     showUploadList: false,
@@ -111,12 +120,12 @@ const CheckPaper: React.FC = () => {
 
   const handleStartCheck = async () => {
     if (!currentPaper) {
-      message.warning('请先上传论文');
+      message.warning(isEnglish ? 'Upload a paper first.' : '请先上传论文');
       return;
     }
 
     if (!selectedTemplate) {
-      message.warning('请选择检测模板');
+      message.warning(isEnglish ? 'Select a template first.' : '请选择检测模板');
       return;
     }
 
@@ -124,10 +133,10 @@ const CheckPaper: React.FC = () => {
     try {
       const result = await api.checkPaperFormat(currentPaper.id, selectedTemplate);
       setCurrentResult(result);
-      message.success('检测完成');
+      message.success(isEnglish ? 'Check completed.' : '检测完成');
       navigate(`/result/${result.id}`);
     } catch {
-      message.error('检测失败，请稍后重试');
+      message.error(isEnglish ? 'Check failed. Please try again later.' : '检测失败，请稍后重试');
     } finally {
       setChecking(false);
     }
@@ -141,15 +150,17 @@ const CheckPaper: React.FC = () => {
   return (
     <div data-testid="page-check" style={{ maxWidth: 860, margin: '0 auto' }}>
       <Title level={2} style={{ marginBottom: 24 }}>
-        论文格式检测
+        {isEnglish ? 'Paper Format Check' : '论文格式检测'}
       </Title>
 
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 24 }}
-        title="当前仅支持 .docx 格式"
-        description="建议上传按学校模板排版后的 Word 文档，系统会根据所选模板给出位置化问题提示。"
+        title={isEnglish ? 'Only .docx files are supported' : '当前仅支持 .docx 格式'}
+        description={isEnglish
+          ? 'Upload a Word document that follows the school template. The system will report issues with clear locations based on the selected rule set.'
+          : '建议上传按学校模板排版后的 Word 文档，系统会根据所选模板给出位置化问题提示。'}
       />
 
       {shouldShowRestoredNotice && (
@@ -159,17 +170,17 @@ const CheckPaper: React.FC = () => {
           closable
           onClose={handleCloseRestoredNotice}
           style={{ marginBottom: 24 }}
-          title="已从本地恢复最近一次工作上下文"
+          title={isEnglish ? 'Restored the latest local working context' : '已从本地恢复最近一次工作上下文'}
           description={restoredNoticeDescription}
           action={(
             <Space>
               {currentResult && (
                 <Button size="small" type="link" onClick={() => navigate(`/result/${currentResult.id}`)}>
-                  查看最近结果
+                  {isEnglish ? 'Open Last Result' : '查看最近结果'}
                 </Button>
               )}
               <Button size="small" onClick={clearCurrentContext}>
-                清除本地记录
+                {isEnglish ? 'Clear Local Context' : '清除本地记录'}
               </Button>
             </Space>
           )}
@@ -177,16 +188,16 @@ const CheckPaper: React.FC = () => {
       )}
 
       <Card variant="borderless" style={{ marginBottom: 24 }}>
-        <Title level={5}>1. 上传论文</Title>
-        <Paragraph type="secondary">支持上传 `.docx` 格式的 Word 文档。</Paragraph>
+        <Title level={5}>{isEnglish ? '1. Upload Paper' : '1. 上传论文'}</Title>
+        <Paragraph type="secondary">{isEnglish ? 'Upload a `.docx` Word document.' : '支持上传 `.docx` 格式的 Word 文档。'}</Paragraph>
 
         {!currentPaper ? (
           <Dragger {...props}>
             <p className="ant-upload-drag-icon">
               <InboxOutlined />
             </p>
-            <p className="ant-upload-text">点击或将文件拖到这里上传</p>
-            <p className="ant-upload-hint">单个文件不超过 50MB</p>
+            <p className="ant-upload-text">{isEnglish ? 'Click or drag a file here to upload' : '点击或将文件拖到这里上传'}</p>
+            <p className="ant-upload-hint">{isEnglish ? 'One file only, up to 50 MB' : '单个文件不超过 50MB'}</p>
           </Dragger>
         ) : (
           <Card type="inner" style={{ background: '#f5f5f5', border: '1px dashed #d9d9d9' }}>
@@ -202,7 +213,7 @@ const CheckPaper: React.FC = () => {
                 </div>
               </Space>
               <Button type="link" onClick={clearCurrentContext}>
-                重新上传
+                {isEnglish ? 'Upload Another File' : '重新上传'}
               </Button>
             </div>
           </Card>
@@ -210,12 +221,13 @@ const CheckPaper: React.FC = () => {
       </Card>
 
       <Card variant="borderless" style={{ marginBottom: 24 }}>
-        <Title level={5}>2. 选择模板</Title>
-        <Paragraph type="secondary">选择要对照的格式模板，默认会优先使用当前默认模板。</Paragraph>
+        <Title level={5}>{isEnglish ? '2. Select Template' : '2. 选择模板'}</Title>
+        <Paragraph type="secondary">{isEnglish ? 'Choose the rule template to compare against. The current default template is preferred automatically.' : '选择要对照的格式模板，默认会优先使用当前默认模板。'}</Paragraph>
 
         <Select
+          data-testid="template-select"
           style={{ width: '100%', maxWidth: 480 }}
-          placeholder="请选择检测模板"
+          placeholder={isEnglish ? 'Select a check template' : '请选择检测模板'}
           value={selectedTemplate || undefined}
           onChange={setSelectedTemplate}
           options={templates.map((template) => ({ value: template.id, label: template.name }))}
@@ -224,7 +236,7 @@ const CheckPaper: React.FC = () => {
 
       <div style={{ textAlign: 'center', marginTop: 40 }}>
         {checking ? (
-          <Spin tip="正在进行格式检测，请稍候..." size="large">
+          <Spin tip={isEnglish ? 'Checking the document format. Please wait...' : '正在进行格式检测，请稍候...'} size="large">
             <div style={{ padding: 50 }} />
           </Spin>
         ) : (
@@ -236,7 +248,7 @@ const CheckPaper: React.FC = () => {
             disabled={!currentPaper || !selectedTemplate}
             style={{ width: 220, height: 48, fontSize: 16 }}
           >
-            开始检测
+            {isEnglish ? 'Start Check' : '开始检测'}
           </Button>
         )}
       </div>

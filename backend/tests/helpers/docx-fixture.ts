@@ -6,6 +6,7 @@ import JSZip from 'jszip';
 interface ParagraphFixture {
   text: string;
   styleId?: string;
+  alignment?: 'left' | 'center' | 'right';
   fontFamily?: string;
   fontSizeHalfPoints?: number;
   line?: number;
@@ -19,6 +20,22 @@ interface ParagraphFixture {
   };
 }
 
+interface TableCellFixture {
+  paragraphs: ParagraphFixture[];
+}
+
+interface TableRowFixture {
+  cells: TableCellFixture[];
+}
+
+interface TableFixture {
+  rows: TableRowFixture[];
+}
+
+type DocumentBlockFixture =
+  | { type: 'paragraph'; paragraph: ParagraphFixture }
+  | { type: 'table'; table: TableFixture };
+
 interface NumberingFixture {
   numId: string;
   abstractNumId: string;
@@ -27,9 +44,12 @@ interface NumberingFixture {
 }
 
 interface CreateDocxFixtureInput {
-  paragraphs: ParagraphFixture[];
+  paragraphs?: ParagraphFixture[];
+  documentBlocks?: DocumentBlockFixture[];
   numbering?: NumberingFixture[];
   headers?: string[];
+  headerParagraphs?: ParagraphFixture[];
+  footerParagraphs?: ParagraphFixture[];
   includeFooterPageNumber?: boolean;
   footerAlignment?: 'left' | 'center' | 'right';
 }
@@ -45,6 +65,14 @@ const buildParagraphXml = (paragraph: ParagraphFixture): string => {
 
   if (paragraph.styleId) {
     paragraphProperties.push(`<w:pStyle w:val="${paragraph.styleId}"/>`);
+  }
+
+  if (paragraph.alignment) {
+    paragraphProperties.push(
+      `<w:jc w:val="${
+        paragraph.alignment === 'center' ? 'center' : paragraph.alignment === 'right' ? 'right' : 'left'
+      }"/>`
+    );
   }
 
   if (paragraph.numbering) {
@@ -95,6 +123,20 @@ const buildParagraphXml = (paragraph: ParagraphFixture): string => {
   `;
 };
 
+const buildTableXml = (table: TableFixture): string => `
+  <w:tbl>
+    ${table.rows.map((row) => `
+      <w:tr>
+        ${row.cells.map((cell) => `
+          <w:tc>
+            ${cell.paragraphs.map((paragraph) => buildParagraphXml(paragraph)).join('')}
+          </w:tc>
+        `).join('')}
+      </w:tr>
+    `).join('')}
+  </w:tbl>
+`;
+
 const buildNumberingXml = (numbering: NumberingFixture[]): string => `
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -120,6 +162,12 @@ export const createDocxFixture = async (input: CreateDocxFixtureInput): Promise<
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'paper-checker-docx-'));
   const filePath = path.join(tempDir, 'fixture.docx');
   const zip = new JSZip();
+  const headerCount = (input.headers?.length ?? 0) + (input.headerParagraphs?.length ? 1 : 0);
+  const hasFooter = Boolean(input.includeFooterPageNumber || input.footerParagraphs?.length);
+  const documentBlocks = input.documentBlocks ?? (input.paragraphs ?? []).map((paragraph) => ({
+    type: 'paragraph' as const,
+    paragraph,
+  }));
 
   zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -128,8 +176,8 @@ export const createDocxFixture = async (input: CreateDocxFixtureInput): Promise<
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   ${input.numbering?.length ? '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>' : ''}
-  ${input.headers?.length ? input.headers.map((_, index) => `<Override PartName="/word/header${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`).join('') : ''}
-  ${input.includeFooterPageNumber ? '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' : ''}
+  ${headerCount > 0 ? Array.from({ length: headerCount }, (_, index) => `<Override PartName="/word/header${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>`).join('') : ''}
+  ${hasFooter ? '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>' : ''}
 </Types>`);
 
   zip.folder('_rels')?.file('.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -160,13 +208,15 @@ export const createDocxFixture = async (input: CreateDocxFixtureInput): Promise<
     zip.folder('word')?.file('numbering.xml', buildNumberingXml(input.numbering));
   }
 
-  if (input.includeFooterPageNumber) {
+  if (hasFooter) {
     zip.folder('word')?.file('footer1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:p>
+  ${(input.footerParagraphs ?? []).map((paragraph) => buildParagraphXml(paragraph)).join('')}
+  ${input.includeFooterPageNumber ? `<w:p>
     <w:pPr><w:jc w:val="${input.footerAlignment ?? 'center'}"/></w:pPr>
     <w:r><w:instrText> PAGE </w:instrText></w:r>
   </w:p>
+  ` : ''}
 </w:ftr>`);
   }
 
@@ -179,10 +229,21 @@ export const createDocxFixture = async (input: CreateDocxFixtureInput): Promise<
 </w:hdr>`);
   });
 
+  if (input.headerParagraphs?.length) {
+    zip.folder('word')?.file(`header${(input.headers?.length ?? 0) + 1}.xml`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  ${input.headerParagraphs.map((paragraph) => buildParagraphXml(paragraph)).join('')}
+</w:hdr>`);
+  }
+
   zip.folder('word')?.file('document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    ${input.paragraphs.map((paragraph) => buildParagraphXml(paragraph)).join('')}
+    ${documentBlocks.map((block) => (
+      block.type === 'paragraph'
+        ? buildParagraphXml(block.paragraph)
+        : buildTableXml(block.table)
+    )).join('')}
     <w:sectPr>
       <w:pgSz w:w="11906" w:h="16838"/>
       <w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1701"/>

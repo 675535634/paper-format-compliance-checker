@@ -13,18 +13,18 @@ import { createCheckSchema } from '../services/validation-service.js';
 
 export const checksRouter = Router();
 
-checksRouter.get('/', async (_request, response) => {
-  response.json(await listChecks());
+checksRouter.get('/', async (request, response) => {
+  response.json(await listChecks(request.currentUser!.id));
 });
 
 checksRouter.post('/', async (request, response) => {
   const payload = createCheckSchema.parse(request.body);
-  const check = await createCheck(payload);
+  const check = await createCheck(request.currentUser!.id, payload);
   response.status(201).json(check);
 });
 
 checksRouter.get('/:id', async (request, response) => {
-  const check = await getCheckById(request.params.id);
+  const check = await getCheckById(request.params.id, request.currentUser!.id);
   if (!check) {
     throw new HttpError(404, `Check ${request.params.id} was not found.`);
   }
@@ -33,7 +33,7 @@ checksRouter.get('/:id', async (request, response) => {
 });
 
 checksRouter.get('/:id/result', async (request, response) => {
-  const result = await getCheckResult(request.params.id);
+  const result = await getCheckResult(request.params.id, request.currentUser!.id);
   if (!result) {
     throw new HttpError(404, `Check result for ${request.params.id} was not found.`);
   }
@@ -42,6 +42,11 @@ checksRouter.get('/:id/result', async (request, response) => {
 });
 
 checksRouter.get('/:id/debug-log', async (request, response) => {
+  const check = await getCheckById(request.params.id, request.currentUser!.id);
+  if (!check) {
+    throw new HttpError(404, `Check ${request.params.id} was not found.`);
+  }
+
   const debugLog = await getCheckDebugLog(request.params.id);
   if (!debugLog) {
     throw new HttpError(404, `Debug log for ${request.params.id} was not found.`);
@@ -55,7 +60,7 @@ checksRouter.get('/:id/debug-log', async (request, response) => {
 
 checksRouter.get('/:id/fix-download', async (request, response) => {
   try {
-    const fixedDocument = await createFixedDocumentForCheck(request.params.id);
+    const fixedDocument = await createFixedDocumentForCheck(request.currentUser!.id, request.params.id);
     response.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     response.setHeader('content-disposition', `attachment; filename="${fixedDocument.filename}"; filename*=UTF-8''${encodeURIComponent(fixedDocument.filename)}`);
     response.send(fixedDocument.buffer);
@@ -66,7 +71,7 @@ checksRouter.get('/:id/fix-download', async (request, response) => {
 });
 
 checksRouter.post('/:id/retry', async (request, response) => {
-  const check = await retryCheck(request.params.id);
+  const check = await retryCheck(request.currentUser!.id, request.params.id);
   if (!check) {
     throw new HttpError(404, `Check ${request.params.id} was not found.`);
   }

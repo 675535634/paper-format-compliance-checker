@@ -1,20 +1,32 @@
 
 import { RouterProvider } from 'react-router-dom';
-import { ConfigProvider } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
+import { App as AntdApp, ConfigProvider } from 'antd';
 import { router } from './router';
+import { I18nProvider, useI18n } from './i18n';
 
-function App() {
+const AppShell: React.FC = () => {
+  const { antdLocale } = useI18n();
+
   return (
-    <ConfigProvider locale={zhCN} theme={{
+    <ConfigProvider locale={antdLocale} theme={{
       token: {
         colorPrimary: '#1677ff',
         borderRadius: 6,
         colorBgContainer: '#ffffff',
       }
     }}>
-      <RouterProvider router={router} />
+      <AntdApp>
+        <RouterProvider router={router} />
+      </AntdApp>
     </ConfigProvider>
+  );
+};
+
+function App() {
+  return (
+    <I18nProvider>
+      <AppShell />
+    </I18nProvider>
   );
 }
 

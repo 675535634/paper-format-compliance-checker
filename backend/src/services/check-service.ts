@@ -173,7 +173,12 @@ export const createCheck = async (userId: string, input: CreateCheckInput): Prom
     templateId: resolvedRuleSet.templateId,
   });
 
-  await executeCheck(userId, check.id, input.fileId, input.templateId, input.inlineRuleConfig);
+  try {
+    await executeCheck(userId, check.id, input.fileId, input.templateId, input.inlineRuleConfig);
+  } catch {
+    // The task state has already been persisted as failed with a detailed error message.
+  }
+
   const finalCheck = await getCheckById(check.id, userId);
 
   if (!finalCheck) {

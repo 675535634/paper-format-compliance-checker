@@ -22,7 +22,7 @@ export const AppLayout: React.FC = () => {
   const currentUser = useAppStore((state) => state.currentUser);
   const clearSession = useAppStore((state) => state.clearSession);
   const {
-    token: { colorBgContainer, borderRadiusLG },
+    token: { colorBgContainer },
   } = theme.useToken();
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,40 +73,52 @@ export const AppLayout: React.FC = () => {
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       <Sider
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
         theme="light"
-        style={{ borderRight: '1px solid #f0f0f0' }}
+        style={{
+          borderRight: '1px solid #f0f0f0',
+          height: '100vh',
+          position: 'sticky',
+          top: 0,
+          left: 0,
+          overflow: 'hidden',
+        }}
       >
-        <div
-          style={{
-            height: 64,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 'bold',
-            fontSize: collapsed ? 14 : 18,
-            color: '#1677ff',
-            borderBottom: '1px solid #f0f0f0',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-          }}
-        >
-          {collapsed ? 'PFCC' : isEnglish ? 'Paper Format Checker' : '论文格式检查器'}
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <div
+            style={{
+              height: 64,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 'bold',
+              fontSize: collapsed ? 14 : 18,
+              color: '#1677ff',
+              borderBottom: '1px solid #f0f0f0',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              flexShrink: 0,
+            }}
+          >
+            {collapsed ? 'PFCC' : isEnglish ? 'Paper Format Checker' : '论文格式检查器'}
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+            <Menu
+              theme="light"
+              selectedKeys={[selectedMenuKey]}
+              mode="inline"
+              items={menuItems}
+              onClick={({ key }) => navigate(key)}
+              style={{ borderRight: 0 }}
+            />
+          </div>
         </div>
-        <Menu
-          theme="light"
-          selectedKeys={[selectedMenuKey]}
-          mode="inline"
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-          style={{ borderRight: 0 }}
-        />
       </Sider>
-      <Layout>
+      <Layout style={{ minWidth: 0, height: '100vh', overflow: 'hidden' }}>
         <Header
           style={{
             padding: 0,
@@ -117,6 +129,7 @@ export const AppLayout: React.FC = () => {
             paddingLeft: 24,
             paddingRight: 24,
             justifyContent: 'space-between',
+            flexShrink: 0,
           }}
         >
           <div style={{ fontWeight: 600 }}>
@@ -125,6 +138,7 @@ export const AppLayout: React.FC = () => {
           <Space size={12}>
             <Select
               data-testid="language-switcher"
+              aria-label={isEnglish ? 'Language' : '语言'}
               value={locale}
               onChange={setLocale}
               style={{ width: 120 }}
@@ -154,16 +168,14 @@ export const AppLayout: React.FC = () => {
             </Dropdown>
           </Space>
         </Header>
-        <Content style={{ margin: '24px', display: 'flex', flexDirection: 'column' }}>
-          <div
-            style={{
-              padding: 24,
-              minHeight: 360,
-              background: colorBgContainer,
-              borderRadius: borderRadiusLG,
-              flex: 1,
-            }}
-          >
+        <Content
+          style={{
+            margin: '24px',
+            overflowY: 'auto',
+            minHeight: 0,
+          }}
+        >
+          <div style={{ minWidth: 0, paddingBottom: 24 }}>
             <Outlet />
           </div>
         </Content>

@@ -13,6 +13,21 @@ import { createCheckSchema } from '../services/validation-service.js';
 
 export const checksRouter = Router();
 
+const toAsciiDownloadName = (filename: string): string => {
+  const normalized = filename
+    .replace(/[^\x20-\x7E]+/g, '_')
+    .replace(/["\\;]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return normalized.length > 0 ? normalized : 'download.bin';
+};
+
+const buildAttachmentDisposition = (filename: string): string => {
+  const asciiFilename = toAsciiDownloadName(filename);
+  return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+};
+
 checksRouter.get('/', async (request, response) => {
   response.json(await listChecks(request.currentUser!.id));
 });
@@ -54,19 +69,24 @@ checksRouter.get('/:id/debug-log', async (request, response) => {
 
   const filename = `${request.params.id}.debug.json`;
   response.setHeader('content-type', 'application/json; charset=utf-8');
-  response.setHeader('content-disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  response.setHeader('content-disposition', buildAttachmentDisposition(filename));
   response.send(debugLog);
 });
 
 checksRouter.get('/:id/fix-download', async (request, response) => {
+  const check = await getCheckById(request.params.id, request.currentUser!.id);
+  if (!check) {
+    throw new HttpError(404, `Check ${request.params.id} was not found.`);
+  }
+
   try {
     const fixedDocument = await createFixedDocumentForCheck(request.currentUser!.id, request.params.id);
     response.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-    response.setHeader('content-disposition', `attachment; filename="${fixedDocument.filename}"; filename*=UTF-8''${encodeURIComponent(fixedDocument.filename)}`);
+    response.setHeader('content-disposition', buildAttachmentDisposition(fixedDocument.filename));
     response.send(fixedDocument.buffer);
   } catch (error) {
     const message = error instanceof Error ? error.message : `Fix download for ${request.params.id} failed.`;
-    throw new HttpError(404, message);
+    throw new HttpError(500, message);
   }
 });
 

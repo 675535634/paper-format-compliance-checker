@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { App as AntdApp, Button, Card, Col, Form, Input, Row, Tabs, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../../api';
+import { api, extractApiErrorMessage } from '../../api';
 import { useI18n } from '../../i18n';
 import { useAppStore } from '../../store';
 
@@ -29,7 +29,7 @@ const AuthPage: React.FC = () => {
       message.success(isEnglish ? 'Signed in successfully.' : '登录成功。');
       navigate('/dashboard', { replace: true });
     } catch (error) {
-      const text = error instanceof Error ? error.message : undefined;
+      const text = extractApiErrorMessage(error);
       message.error(text ?? (isEnglish ? 'Failed to sign in.' : '登录失败。'));
     } finally {
       setLoading(false);
@@ -55,7 +55,7 @@ const AuthPage: React.FC = () => {
       message.success(isEnglish ? 'Account created.' : '注册成功。');
       navigate('/dashboard', { replace: true });
     } catch (error) {
-      const text = error instanceof Error ? error.message : undefined;
+      const text = extractApiErrorMessage(error);
       message.error(text ?? (isEnglish ? 'Failed to register.' : '注册失败。'));
     } finally {
       setLoading(false);

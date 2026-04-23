@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  App as AntdApp,
   Card,
   Result,
   Button,
@@ -13,13 +14,12 @@ import {
   Alert,
   Radio,
   Skeleton,
-  message,
   Row,
   Col,
   Pagination,
 } from 'antd';
 import { DownloadOutlined, ExclamationCircleOutlined, FileSearchOutlined, ToolOutlined } from '@ant-design/icons';
-import { api } from '../../api';
+import { api, extractApiErrorMessage, isUnauthorizedError } from '../../api';
 import { useAppStore } from '../../store';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { CheckIssue } from '../../types';
@@ -55,6 +55,7 @@ const downloadBlob = (blob: Blob, filename: string): void => {
 
 const CheckResultPage: React.FC = () => {
   const { isEnglish } = useI18n();
+  const { message } = AntdApp.useApp();
   const storedResult = useAppStore((state) => state.currentResult);
   const storedPaper = useAppStore((state) => state.currentPaper);
   const setCurrentResult = useAppStore((state) => state.setCurrentResult);
@@ -100,7 +101,11 @@ const CheckResultPage: React.FC = () => {
         const paper = await api.getUploadedPaper(check.paperId);
         setCurrentResult(result);
         setCurrentPaper(paper);
-      } catch {
+      } catch (error) {
+        if (isUnauthorizedError(error)) {
+          return;
+        }
+
         setLoadError(isEnglish ? 'Failed to load the check result. Please try again later.' : '加载检测结果失败，请稍后重试。');
       } finally {
         setLoading(false);
@@ -108,7 +113,7 @@ const CheckResultPage: React.FC = () => {
     };
 
     void loadCheckResult();
-  }, [checkId, setCurrentPaper, setCurrentResult, storedPaper, storedResult]);
+  }, [checkId, isEnglish, setCurrentPaper, setCurrentResult, storedPaper, storedResult]);
 
   useEffect(() => {
     setCardPage(1);
@@ -124,8 +129,12 @@ const CheckResultPage: React.FC = () => {
       const { blob, filename } = await api.downloadCheckDebugLog(checkId);
       downloadBlob(blob, filename);
       message.success(isEnglish ? 'The parser log download has started.' : '解析日志已开始下载');
-    } catch {
-      message.error(isEnglish ? 'Failed to download the parser log.' : '解析日志下载失败');
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
+      message.error(extractApiErrorMessage(error) ?? (isEnglish ? 'Failed to download the parser log.' : '解析日志下载失败'));
     } finally {
       setLogDownloading(false);
     }
@@ -141,8 +150,12 @@ const CheckResultPage: React.FC = () => {
       const { blob, filename } = await api.downloadFixedDocx(checkId);
       downloadBlob(blob, filename);
       message.success(isEnglish ? 'The repaired document download has started.' : '修正版文档已开始下载');
-    } catch {
-      message.error(isEnglish ? 'Failed to export the repaired document.' : '修正版文档导出失败');
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
+      message.error(extractApiErrorMessage(error) ?? (isEnglish ? 'Failed to export the repaired document.' : '修正版文档导出失败'));
     } finally {
       setFixDownloading(false);
     }

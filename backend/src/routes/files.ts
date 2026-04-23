@@ -18,7 +18,13 @@ filesRouter.post('/upload-docx', upload.single('file'), async (request, response
     throw new HttpError(400, 'A .docx file must be provided in the "file" field.');
   }
 
-  const uploaded = await saveUploadedFile(request.file, request.currentUser!.id);
+  let uploaded;
+  try {
+    uploaded = await saveUploadedFile(request.file, request.currentUser!.id);
+  } catch (error) {
+    throw new HttpError(400, error instanceof Error ? error.message : 'The uploaded file is invalid.');
+  }
+
   response.status(201).json(uploaded);
 });
 

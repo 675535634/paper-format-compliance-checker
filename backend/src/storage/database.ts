@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
 import { seedTemplates, SYSTEM_USER_ID } from '../constants/defaults.js';
@@ -154,41 +154,74 @@ const normalizeDatabaseState = (input: unknown): DatabaseState => {
 };
 
 let writeChain = Promise.resolve();
+let storageReady: Promise<void> | null = null;
 
-export const ensureStorage = async (): Promise<void> => {
-  await mkdir(env.dataDir, { recursive: true });
-  await mkdir(env.uploadDir, { recursive: true });
-  await mkdir(env.logDir, { recursive: true });
-  await mkdir(path.dirname(env.databaseFile), { recursive: true });
+const serializeDatabaseState = (state: DatabaseState): string =>
+  JSON.stringify(normalizeDatabaseState(state), null, 2);
 
-  try {
-    const content = await readFile(env.databaseFile, 'utf8');
-    const normalized = normalizeDatabaseState(JSON.parse(content));
-    await writeFile(env.databaseFile, JSON.stringify(normalized, null, 2), 'utf8');
-  } catch {
-    await writeFile(env.databaseFile, JSON.stringify(createSeedState(), null, 2), 'utf8');
-  }
-};
-
-export const readDatabase = async (): Promise<DatabaseState> => {
-  await ensureStorage();
+const readDatabaseFile = async (): Promise<DatabaseState> => {
   const content = await readFile(env.databaseFile, 'utf8');
   return normalizeDatabaseState(JSON.parse(content));
 };
 
+const writeDatabaseFile = async (state: DatabaseState): Promise<void> => {
+  const tempFile = `${env.databaseFile}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempFile, serializeDatabaseState(state), 'utf8');
+  await rename(tempFile, env.databaseFile);
+};
+
+const enqueueStorageTask = async <T>(task: () => Promise<T>): Promise<T> => {
+  const queuedTask = writeChain.then(task, task);
+  writeChain = queuedTask.then(() => undefined, () => undefined);
+  return queuedTask;
+};
+
+export const ensureStorage = async (): Promise<void> => {
+  if (!storageReady) {
+    storageReady = (async () => {
+      await mkdir(env.dataDir, { recursive: true });
+      await mkdir(env.uploadDir, { recursive: true });
+      await mkdir(env.logDir, { recursive: true });
+      await mkdir(path.dirname(env.databaseFile), { recursive: true });
+
+      try {
+        const normalized = await readDatabaseFile();
+        await writeDatabaseFile(normalized);
+      } catch (error) {
+        const nodeError = error as NodeJS.ErrnoException;
+        if (nodeError?.code === 'ENOENT') {
+          await writeDatabaseFile(createSeedState());
+          return;
+        }
+
+        throw error;
+      }
+    })();
+  }
+
+  await storageReady;
+  await writeChain;
+};
+
+export const readDatabase = async (): Promise<DatabaseState> => {
+  await ensureStorage();
+  return readDatabaseFile();
+};
+
 export const writeDatabase = async (state: DatabaseState): Promise<void> => {
   await ensureStorage();
-  writeChain = writeChain.then(async () => {
-    await writeFile(env.databaseFile, JSON.stringify(normalizeDatabaseState(state), null, 2), 'utf8');
-  });
-  await writeChain;
+  await enqueueStorageTask(() => writeDatabaseFile(normalizeDatabaseState(state)));
 };
 
 export const updateDatabase = async <T>(
   updater: (state: DatabaseState) => { state: DatabaseState; result: T }
 ): Promise<T> => {
-  const current = await readDatabase();
-  const { state, result } = updater(current);
-  await writeDatabase(state);
-  return result;
+  await ensureStorage();
+
+  return enqueueStorageTask(async () => {
+    const current = await readDatabaseFile();
+    const { state, result } = updater(current);
+    await writeDatabaseFile(normalizeDatabaseState(state));
+    return result;
+  });
 };

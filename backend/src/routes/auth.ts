@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { ZodError } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 import { loginUser, registerUser, revokeToken } from '../services/auth-service.js';
 import { loginSchema, registerSchema } from '../services/validation-service.js';
@@ -25,6 +26,10 @@ authRouter.post('/login', async (request, response) => {
     const session = await loginUser(payload);
     response.json(session);
   } catch (error) {
+    if (error instanceof ZodError) {
+      throw error;
+    }
+
     if (error instanceof Error) {
       throw new HttpError(401, error.message);
     }

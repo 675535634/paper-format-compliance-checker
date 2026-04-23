@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createDocxFixture } from './helpers/docx-fixture.js';
 
 const registerAndGetToken = async (app: ReturnType<typeof import('../src/app.js')['createApp']>) => {
   const response = await request(app)
@@ -118,5 +119,142 @@ describe('backend app integration', () => {
     expect(response.status).toBe(400);
     expect(response.body.message).toBe('Request validation failed.');
     expect(Array.isArray(response.body.issues)).toBe(true);
+  });
+
+  it('returns validation errors for malformed login payloads', async () => {
+    const { ensureStorage } = await import('../src/storage/database.js');
+    await ensureStorage();
+    const { createApp } = await import('../src/app.js');
+    const app = createApp();
+
+    const response = await request(app)
+      .post('/api/auth/login')
+      .send({
+        identifier: '',
+        password: '',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe('Request validation failed.');
+    expect(Array.isArray(response.body.issues)).toBe(true);
+  });
+
+  it('allows logging in again after registering and logging out', async () => {
+    const { ensureStorage } = await import('../src/storage/database.js');
+    await ensureStorage();
+    const { createApp } = await import('../src/app.js');
+    const app = createApp();
+
+    const registerResponse = await request(app)
+      .post('/api/auth/register')
+      .send({
+        username: 'relogin-user',
+        email: 'TEST@qq.com',
+        password: 'secret123',
+        displayName: 'Relogin User',
+      });
+
+    expect(registerResponse.status).toBe(201);
+    expect(registerResponse.body.user.email).toBe('test@qq.com');
+
+    const logoutResponse = await request(app)
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${registerResponse.body.token}`);
+    expect(logoutResponse.status).toBe(204);
+
+    const loginResponse = await request(app)
+      .post('/api/auth/login')
+      .send({
+        identifier: 'TEST@qq.com',
+        password: 'secret123',
+      });
+
+    expect(loginResponse.status).toBe(200);
+    expect(loginResponse.body.user.email).toBe('test@qq.com');
+  });
+
+  it('rejects invalid or temporary docx uploads before creating a check task', async () => {
+    const { ensureStorage } = await import('../src/storage/database.js');
+    await ensureStorage();
+    const { createApp } = await import('../src/app.js');
+    const app = createApp();
+    const token = await registerAndGetToken(app);
+
+    const temporaryFileResponse = await request(app)
+      .post('/api/files/upload-docx')
+      .set('Authorization', `Bearer ${token}`)
+      .attach('file', Buffer.from('not-a-real-docx'), {
+        filename: '~$paper.docx',
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+
+    expect(temporaryFileResponse.status).toBe(400);
+    expect(temporaryFileResponse.body.message).toContain('~$');
+
+    const corruptedDocxResponse = await request(app)
+      .post('/api/files/upload-docx')
+      .set('Authorization', `Bearer ${token}`)
+      .attach('file', Buffer.from('not-a-real-docx'), {
+        filename: 'paper.docx',
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+
+    expect(corruptedDocxResponse.status).toBe(400);
+    expect(corruptedDocxResponse.body.message).toContain('invalid or corrupted');
+  });
+
+  it('downloads a repaired docx for a completed check', async () => {
+    const { ensureStorage } = await import('../src/storage/database.js');
+    await ensureStorage();
+    const { createApp } = await import('../src/app.js');
+    const app = createApp();
+    const token = await registerAndGetToken(app);
+
+    const fixture = await createDocxFixture({
+      paragraphs: [
+        { text: '论文题目：测试论文' },
+        { text: '摘要' },
+        { text: '这是一段用于修复导出测试的摘要正文。' },
+        { text: '关键词 测试；导出' },
+      ],
+    });
+
+    try {
+      const uploadResponse = await request(app)
+        .post('/api/files/upload-docx')
+        .set('Authorization', `Bearer ${token}`)
+        .attach('file', fixture.filePath);
+
+      expect(uploadResponse.status).toBe(201);
+
+      const templatesResponse = await request(app)
+        .get('/api/templates')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(templatesResponse.status).toBe(200);
+      expect(templatesResponse.body.length).toBeGreaterThan(0);
+
+      const checkResponse = await request(app)
+        .post('/api/checks')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          fileId: uploadResponse.body.id,
+          templateId: templatesResponse.body[0].id,
+        });
+
+      expect(checkResponse.status).toBe(201);
+      expect(checkResponse.body.status).toBe('completed');
+
+      const fixResponse = await request(app)
+        .get(`/api/checks/${checkResponse.body.id}/fix-download`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(fixResponse.status).toBe(200);
+      expect(fixResponse.headers['content-type']).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      expect(fixResponse.headers['content-disposition']).toContain('_fixed.docx');
+      expect(Number.parseInt(fixResponse.headers['content-length'] ?? '0', 10)).toBeGreaterThan(0);
+    } finally {
+      await fixture.cleanup();
+    }
   });
 });

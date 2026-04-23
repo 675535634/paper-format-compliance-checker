@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Upload, Select, Button, Typography, Card, Space, message, Spin, Alert } from 'antd';
+import { App as AntdApp, Upload, Select, Button, Typography, Card, Space, Spin, Alert } from 'antd';
 import { InboxOutlined, FileWordOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
-import { api } from '../../api';
+import { api, extractApiErrorMessage, isUnauthorizedError } from '../../api';
 import type { RuleTemplate } from '../../types';
 import { useAppStore } from '../../store';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -13,6 +13,7 @@ const { Dragger } = Upload;
 
 const CheckPaper: React.FC = () => {
   const { isEnglish } = useI18n();
+  const { message } = AntdApp.useApp();
   const [templates, setTemplates] = useState<RuleTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [checking, setChecking] = useState(false);
@@ -46,13 +47,17 @@ const CheckPaper: React.FC = () => {
         } else if (data.length > 0) {
           setSelectedTemplate(data[0].id);
         }
-      } catch {
+      } catch (error) {
+        if (isUnauthorizedError(error)) {
+          return;
+        }
+
         message.error(isEnglish ? 'Failed to load templates.' : '获取模板失败');
       }
     };
 
     void fetchTemplates();
-  }, [templateIdFromUrl]);
+  }, [isEnglish, message, templateIdFromUrl]);
 
   const restoredNoticeDescription = useMemo(() => {
     if (!hasHydrated) {
@@ -102,6 +107,11 @@ const CheckPaper: React.FC = () => {
         return Upload.LIST_IGNORE;
       }
 
+      if (file.name.startsWith('~$')) {
+        message.error(isEnglish ? 'Word temporary lock files starting with "~$" are not supported. Please upload the real document.' : '不支持上传以“~$”开头的 Word 临时锁文件，请上传真正的论文文档。');
+        return Upload.LIST_IGNORE;
+      }
+
       return true;
     },
     customRequest: async ({ file, onSuccess, onError }) => {
@@ -112,7 +122,11 @@ const CheckPaper: React.FC = () => {
         message.success(isEnglish ? `${uploaded.filename} uploaded successfully.` : `${uploaded.filename} 上传成功`);
       } catch (error) {
         onError?.(error as Error);
-        message.error(isEnglish ? 'Upload failed.' : '文件上传失败');
+        if (isUnauthorizedError(error)) {
+          return;
+        }
+
+        message.error(extractApiErrorMessage(error) ?? (isEnglish ? 'Upload failed.' : '文件上传失败'));
       }
     },
     showUploadList: false,
@@ -135,8 +149,12 @@ const CheckPaper: React.FC = () => {
       setCurrentResult(result);
       message.success(isEnglish ? 'Check completed.' : '检测完成');
       navigate(`/result/${result.id}`);
-    } catch {
-      message.error(isEnglish ? 'Check failed. Please try again later.' : '检测失败，请稍后重试');
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
+      message.error(extractApiErrorMessage(error) ?? (isEnglish ? 'Check failed. Please try again later.' : '检测失败，请稍后重试'));
     } finally {
       setChecking(false);
     }
@@ -236,7 +254,7 @@ const CheckPaper: React.FC = () => {
 
       <div style={{ textAlign: 'center', marginTop: 40 }}>
         {checking ? (
-          <Spin tip={isEnglish ? 'Checking the document format. Please wait...' : '正在进行格式检测，请稍候...'} size="large">
+          <Spin description={isEnglish ? 'Checking the document format. Please wait...' : '正在进行格式检测，请稍候...'} size="large">
             <div style={{ padding: 50 }} />
           </Spin>
         ) : (

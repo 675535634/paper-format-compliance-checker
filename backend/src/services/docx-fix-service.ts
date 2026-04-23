@@ -296,8 +296,28 @@ const parseAlignment = (value: string): 'left' | 'center' | 'right' | undefined 
 };
 
 const xmlHeader = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+const xmlDeclarationPattern = /^(?:\s*<\?xml[^?]*\?>\s*)+/i;
 
-const buildXml = (root: XmlNode): string => `${xmlHeader}${xmlBuilder.build(root)}`;
+const buildXml = (root: XmlNode): string => {
+  const built = xmlBuilder.build(root).replace(xmlDeclarationPattern, '');
+  return `${xmlHeader}${built}`;
+};
+
+const normalizeXmlPart = (content: string): string =>
+  `${xmlHeader}${content.replace(xmlDeclarationPattern, '')}`;
+
+const normalizeZipXmlDeclarations = async (zip: JSZip): Promise<void> => {
+  const xmlEntryNames = Object.keys(zip.files).filter((name) => /\.(xml|rels)$/i.test(name));
+
+  for (const entryName of xmlEntryNames) {
+    const content = await zip.file(entryName)?.async('string');
+    if (!content) {
+      continue;
+    }
+
+    zip.file(entryName, normalizeXmlPart(content));
+  }
+};
 
 const createParagraphNode = (text: string, options?: {
   fontFamily?: string;

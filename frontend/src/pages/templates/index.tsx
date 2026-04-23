@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  App as AntdApp,
   Button,
   Card,
   Popconfirm,
@@ -8,11 +9,10 @@ import {
   Table,
   Tag,
   Typography,
-  message,
 } from 'antd';
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../../api';
+import { api, isUnauthorizedError } from '../../api';
 import { useI18n } from '../../i18n';
 import type { RuleTemplate } from '../../types';
 
@@ -20,6 +20,7 @@ const { Paragraph } = Typography;
 
 const TemplatesManage: React.FC = () => {
   const { isEnglish } = useI18n();
+  const { message } = AntdApp.useApp();
   const [templates, setTemplates] = useState<RuleTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
@@ -30,7 +31,11 @@ const TemplatesManage: React.FC = () => {
     try {
       const data = await api.getTemplates();
       setTemplates(data);
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to load templates.' : '模板加载失败。');
     } finally {
       setLoading(false);
@@ -39,7 +44,7 @@ const TemplatesManage: React.FC = () => {
 
   useEffect(() => {
     void fetchTemplates();
-  }, []);
+  }, [isEnglish, message]);
 
   const runAction = async (templateId: string, action: () => Promise<void>) => {
     setActiveTemplateId(templateId);
@@ -55,7 +60,11 @@ const TemplatesManage: React.FC = () => {
       await api.deleteTemplate(id);
       message.success(isEnglish ? 'Template deleted.' : '模板已删除。');
       await fetchTemplates();
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to delete the template.' : '删除模板失败。');
     }
   };
@@ -65,7 +74,11 @@ const TemplatesManage: React.FC = () => {
       await api.copyTemplate(id);
       message.success(isEnglish ? 'Template copied.' : '模板已复制。');
       await fetchTemplates();
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to copy the template.' : '复制模板失败。');
     }
   };
@@ -76,7 +89,11 @@ const TemplatesManage: React.FC = () => {
       message.success(isEnglish ? 'Default template updated.' : '默认模板已更新。');
       await fetchTemplates();
       navigate(`/check?templateId=${encodeURIComponent(id)}`);
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to apply this template.' : '应用模板失败。');
     }
   };
@@ -90,7 +107,11 @@ const TemplatesManage: React.FC = () => {
           : isEnglish ? 'Template is now private.' : '模板已设为私有。'
       );
       await fetchTemplates();
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to update visibility.' : '更新可见性失败。');
     }
   };

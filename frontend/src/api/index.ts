@@ -18,6 +18,7 @@ interface CheckTaskResponse {
   templateId: string;
   status: 'pending' | 'checking' | 'completed' | 'failed';
   createdAt: string;
+  errorMessage?: string;
 }
 
 export interface RecentCheckItem {
@@ -33,10 +34,49 @@ interface DownloadResponse {
   filename: string;
 }
 
+interface ApiErrorPayload {
+  message?: string;
+}
+
+const unwrapBlobError = async (error: unknown): Promise<never> => {
+  if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+    const text = await error.response.data.text();
+
+    try {
+      const payload = JSON.parse(text) as ApiErrorPayload;
+      if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
+        throw new Error(payload.message);
+      }
+    } catch {
+      // Ignore JSON parse failures and fall back to the raw text payload below.
+    }
+
+    if (text.trim().length > 0) {
+      throw new Error(text);
+    }
+  }
+
+  throw error;
+};
+
 const apiClient = axios.create({
   baseURL: '/api',
   timeout: 30000,
 });
+
+export const isUnauthorizedError = (error: unknown): boolean =>
+  axios.isAxiosError(error) && error.response?.status === 401;
+
+export const extractApiErrorMessage = (error: unknown): string | undefined => {
+  if (axios.isAxiosError<ApiErrorPayload>(error)) {
+    const message = error.response?.data?.message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+
+  return error instanceof Error ? error.message : undefined;
+};
 
 apiClient.interceptors.request.use((config) => {
   const token = useAppStore.getState().authToken;
@@ -46,6 +86,30 @@ apiClient.interceptors.request.use((config) => {
 
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (isUnauthorizedError(error)) {
+      const requestUrl = error.config?.url ?? '';
+      const isAuthRequest =
+        requestUrl.startsWith('/auth/login')
+        || requestUrl.startsWith('/auth/register')
+        || requestUrl.startsWith('/auth/logout')
+        || requestUrl.startsWith('/auth/me');
+      const { authToken, clearSession } = useAppStore.getState();
+
+      if (authToken && !isAuthRequest) {
+        clearSession();
+        if (typeof window !== 'undefined' && window.location.pathname !== '/auth') {
+          window.location.replace('/auth');
+        }
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 const extractFilename = (contentDisposition: string | undefined, fallback: string): string => {
   if (!contentDisposition) {
@@ -182,6 +246,10 @@ export const api = {
       templateId,
     });
 
+    if (check.status === 'failed') {
+      throw new Error(check.errorMessage ?? 'Check failed.');
+    }
+
     const { data: result } = await apiClient.get<CheckResult>(`/checks/${check.id}/result`);
     return result;
   },
@@ -192,26 +260,34 @@ export const api = {
   },
 
   downloadCheckDebugLog: async (checkId: string): Promise<DownloadResponse> => {
-    const response = await apiClient.get<Blob>(`/checks/${checkId}/debug-log`, {
-      responseType: 'blob',
-    });
+    try {
+      const response = await apiClient.get<Blob>(`/checks/${checkId}/debug-log`, {
+        responseType: 'blob',
+      });
 
-    return {
-      blob: response.data,
-      filename: extractFilename(response.headers['content-disposition'], `${checkId}.debug.json`),
-    };
+      return {
+        blob: response.data,
+        filename: extractFilename(response.headers['content-disposition'], `${checkId}.debug.json`),
+      };
+    } catch (error) {
+      return unwrapBlobError(error);
+    }
   },
 
   downloadFixedDocx: async (checkId: string): Promise<DownloadResponse> => {
-    const response = await apiClient.get<Blob>(`/checks/${checkId}/fix-download`, {
-      responseType: 'blob',
-      timeout: 120000,
-    });
+    try {
+      const response = await apiClient.get<Blob>(`/checks/${checkId}/fix-download`, {
+        responseType: 'blob',
+        timeout: 120000,
+      });
 
-    return {
-      blob: response.data,
-      filename: extractFilename(response.headers['content-disposition'], `${checkId}.fixed.docx`),
-    };
+      return {
+        blob: response.data,
+        filename: extractFilename(response.headers['content-disposition'], `${checkId}.fixed.docx`),
+      };
+    } catch (error) {
+      return unwrapBlobError(error);
+    }
   },
 
   getCheck: async (checkId: string): Promise<CheckTaskResponse> => {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  App as AntdApp,
   Button,
   Card,
   Col,
@@ -11,11 +12,10 @@ import {
   Space,
   Tag,
   Typography,
-  message,
 } from 'antd';
 import { CopyOutlined, FireOutlined, HeartFilled, HeartOutlined, SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../../api';
+import { api, isUnauthorizedError } from '../../api';
 import { useI18n } from '../../i18n';
 import type { PublicTemplateSummary } from '../../types';
 
@@ -25,6 +25,7 @@ const PAGE_SIZE = 9;
 
 const PublicGalleryPage: React.FC = () => {
   const { isEnglish } = useI18n();
+  const { message } = AntdApp.useApp();
   const navigate = useNavigate();
   const [items, setItems] = useState<PublicTemplateSummary[]>([]);
   const [page, setPage] = useState(1);
@@ -44,7 +45,11 @@ const PublicGalleryPage: React.FC = () => {
       });
       setItems(data.items);
       setTotal(data.total);
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to load the public gallery.' : '公开模板广场加载失败。');
     } finally {
       setLoading(false);
@@ -53,7 +58,7 @@ const PublicGalleryPage: React.FC = () => {
 
   useEffect(() => {
     void fetchItems();
-  }, [page, query, sort]);
+  }, [isEnglish, message, page, query, sort]);
 
   const handleFavorite = async (template: PublicTemplateSummary) => {
     try {
@@ -62,7 +67,11 @@ const PublicGalleryPage: React.FC = () => {
         : await api.favoritePublicTemplate(template.id);
 
       setItems((current) => current.map((item) => item.id === updated.id ? updated : item));
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to update favorite status.' : '收藏状态更新失败。');
     }
   };
@@ -72,7 +81,11 @@ const PublicGalleryPage: React.FC = () => {
       const copied = await api.copyTemplate(templateId);
       message.success(isEnglish ? 'Template copied to My Templates.' : '模板已复制到我的模板。');
       navigate(`/rules?templateId=${encodeURIComponent(copied.id)}`);
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(isEnglish ? 'Failed to copy this template.' : '复制模板失败。');
     }
   };

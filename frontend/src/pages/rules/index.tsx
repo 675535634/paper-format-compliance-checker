@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  App as AntdApp,
   Button,
   Card,
   Col,
@@ -12,10 +13,9 @@ import {
   Select,
   Skeleton,
   Space,
-  message,
 } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
-import { api } from '../../api';
+import { api, isUnauthorizedError } from '../../api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { PaperRuleConfig, RuleTemplate } from '../../types';
 import { useI18n } from '../../i18n';
@@ -433,6 +433,15 @@ const getRulesCopy = (isEnglish: boolean) => isEnglish
     };
 
 type RulesCopy = ReturnType<typeof getRulesCopy>;
+
+const toNamePathArray = (name: NamePath | string | number): Array<string | number> =>
+  Array.isArray(name) ? name : [name];
+
+const toFieldDomId = (name: NamePath | string | number, suffix?: string): string =>
+  ['rule', ...toNamePathArray(name).map((segment) => String(segment)), suffix]
+    .filter(Boolean)
+    .join('-')
+    .replace(/[^a-zA-Z0-9_-]/g, '-');
 
 const getDisplayLabel = (
   value: string,
@@ -1343,17 +1352,22 @@ const FontChoiceField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
+  watchName?: NamePath;
   copy: RulesCopy;
   isEnglish: boolean;
-}> = ({ form, label, name, copy, isEnglish }) => {
-  const mode = Form.useWatch([...name, 'mode'], form) as FontMode | undefined;
+}> = ({ form, label, name, watchName, copy, isEnglish }) => {
+  const mode = Form.useWatch([...(watchName ?? name), 'mode'], form) as FontMode | undefined;
+  const modeId = toFieldDomId(name, 'mode');
+  const valueId = toFieldDomId(name, mode === 'custom' ? 'custom' : 'preset');
 
   return (
     <Form.Item label={label}>
       <Space.Compact block>
         <Form.Item name={[...name, 'mode']} noStyle>
           <Select
+            id={modeId}
             style={{ width: 120 }}
+            aria-label={`${label} ${isEnglish ? 'mode' : '模式'}`}
             options={[
               { label: copy.noRequirement, value: 'none' },
               { label: copy.commonFonts, value: 'preset' },
@@ -1363,12 +1377,14 @@ const FontChoiceField: React.FC<{
         </Form.Item>
         {mode === 'custom' ? (
           <Form.Item name={[...name, 'custom']} noStyle>
-            <Input placeholder={copy.customFontPlaceholder} />
+            <Input id={valueId} aria-label={`${label} ${isEnglish ? 'custom font' : '自定义字体'}`} placeholder={copy.customFontPlaceholder} />
           </Form.Item>
         ) : (
           <Form.Item name={[...name, 'preset']} noStyle>
             <Select
+              id={valueId}
               disabled={mode === 'none'}
+              aria-label={`${label} ${isEnglish ? 'font' : '字体'}`}
               options={COMMON_FONTS.map((item) => ({ label: getDisplayLabel(item, isEnglish, FONT_DISPLAY_LABELS), value: item }))}
               showSearch
               optionFilterProp="label"
@@ -1384,17 +1400,23 @@ const SizeChoiceField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
+  watchName?: NamePath;
   copy: RulesCopy;
   isEnglish: boolean;
-}> = ({ form, label, name, copy, isEnglish }) => {
-  const mode = Form.useWatch([...name, 'mode'], form) as SizeMode | undefined;
+}> = ({ form, label, name, watchName, copy, isEnglish }) => {
+  const mode = Form.useWatch([...(watchName ?? name), 'mode'], form) as SizeMode | undefined;
+  const modeId = toFieldDomId(name, 'mode');
+  const valueId = toFieldDomId(name, mode === 'custom' ? 'value' : 'named');
+  const unitId = toFieldDomId(name, 'unit');
 
   return (
     <Form.Item label={label}>
       <Space.Compact block>
         <Form.Item name={[...name, 'mode']} noStyle>
           <Select
+            id={modeId}
             style={{ width: 120 }}
+            aria-label={`${label} ${isEnglish ? 'mode' : '模式'}`}
             options={[
               { label: copy.noRequirement, value: 'none' },
               { label: copy.commonSizes, value: 'named' },
@@ -1405,16 +1427,18 @@ const SizeChoiceField: React.FC<{
         {mode === 'custom' ? (
           <>
             <Form.Item name={[...name, 'value']} noStyle>
-              <InputNumber<number> style={{ width: '100%' }} min={5} max={72} step={0.5} precision={1} parser={toHalfStep} />
+              <InputNumber<number> id={valueId} style={{ width: '100%' }} min={5} max={72} step={0.5} precision={1} parser={toHalfStep} aria-label={`${label} ${isEnglish ? 'value' : '值'}`} />
             </Form.Item>
             <Form.Item name={[...name, 'unit']} noStyle>
-              <Select style={{ width: 90 }} options={[{ label: 'pt', value: 'pt' }, { label: isEnglish ? 'point (磅)' : '磅', value: '磅' }]} />
+              <Select id={unitId} style={{ width: 90 }} aria-label={`${label} ${isEnglish ? 'unit' : '单位'}`} options={[{ label: 'pt', value: 'pt' }, { label: isEnglish ? 'point (磅)' : '磅', value: '磅' }]} />
             </Form.Item>
           </>
         ) : (
           <Form.Item name={[...name, 'named']} noStyle>
             <Select
+              id={valueId}
               disabled={mode === 'none'}
+              aria-label={`${label} ${isEnglish ? 'font size' : '字号'}`}
               options={NAMED_FONT_SIZES.map((item) => ({ label: getDisplayLabel(item, isEnglish, NAMED_SIZE_DISPLAY_LABELS), value: item }))}
               showSearch
               optionFilterProp="label"
@@ -1430,17 +1454,23 @@ const LineHeightField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
+  watchName?: NamePath;
   copy: RulesCopy;
   isEnglish: boolean;
-}> = ({ form, label, name, copy, isEnglish }) => {
-  const mode = Form.useWatch([...name, 'mode'], form) as LineHeightMode | undefined;
+}> = ({ form, label, name, watchName, copy, isEnglish }) => {
+  const mode = Form.useWatch([...(watchName ?? name), 'mode'], form) as LineHeightMode | undefined;
+  const modeId = toFieldDomId(name, 'mode');
+  const valueId = toFieldDomId(name, 'value');
+  const unitId = toFieldDomId(name, 'unit');
 
   return (
     <Form.Item label={label}>
       <Space.Compact block>
         <Form.Item name={[...name, 'mode']} noStyle>
           <Select
+            id={modeId}
             style={{ width: 120 }}
+            aria-label={`${label} ${isEnglish ? 'mode' : '模式'}`}
             options={[
               { label: copy.noRequirement, value: 'none' },
               { label: copy.fixedValue, value: 'fixed' },
@@ -1450,6 +1480,7 @@ const LineHeightField: React.FC<{
         </Form.Item>
         <Form.Item name={[...name, 'value']} noStyle>
           <InputNumber<number>
+            id={valueId}
             style={{ width: '100%' }}
             disabled={mode === 'none'}
             min={mode === 'multiple' ? 1 : 10}
@@ -1457,12 +1488,15 @@ const LineHeightField: React.FC<{
             step={0.5}
             precision={1}
             parser={toHalfStep}
+            aria-label={`${label} ${isEnglish ? 'value' : '值'}`}
           />
         </Form.Item>
         <Form.Item name={[...name, 'unit']} noStyle>
           <Select
+            id={unitId}
             style={{ width: 100 }}
             disabled={mode === 'none'}
+            aria-label={`${label} ${isEnglish ? 'unit' : '单位'}`}
             options={mode === 'multiple'
               ? [{ label: isEnglish ? 'x' : '倍', value: '倍' }]
               : [{ label: 'pt', value: 'pt' }, { label: isEnglish ? 'point (磅)' : '磅', value: '磅' }]}
@@ -1477,17 +1511,24 @@ const SpacingField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
+  watchName?: NamePath;
   copy: RulesCopy;
   isEnglish: boolean;
-}> = ({ form, label, name, copy, isEnglish }) => {
-  const mode = Form.useWatch([...name, 'mode'], form) as SpacingMode | undefined;
+}> = ({ form, label, name, watchName, copy, isEnglish }) => {
+  const mode = Form.useWatch([...(watchName ?? name), 'mode'], form) as SpacingMode | undefined;
+  const modeId = toFieldDomId(name, 'mode');
+  const beforeId = toFieldDomId(name, 'before');
+  const afterId = toFieldDomId(name, 'after');
+  const unitId = toFieldDomId(name, 'unit');
 
   return (
     <Form.Item label={label}>
       <Space.Compact block>
         <Form.Item name={[...name, 'mode']} noStyle>
           <Select
+            id={modeId}
             style={{ width: 120 }}
+            aria-label={`${label} ${isEnglish ? 'mode' : '模式'}`}
             options={[
               { label: copy.noRequirement, value: 'none' },
               { label: copy.custom, value: 'custom' },
@@ -1496,6 +1537,7 @@ const SpacingField: React.FC<{
         </Form.Item>
         <Form.Item name={[...name, 'before']} noStyle>
           <InputNumber<number>
+            id={beforeId}
             style={{ width: '100%' }}
             disabled={mode === 'none'}
             min={0}
@@ -1503,11 +1545,13 @@ const SpacingField: React.FC<{
             step={0.5}
             precision={1}
             parser={toHalfStep}
+            aria-label={`${label} ${isEnglish ? 'before spacing' : '段前'}`}
             placeholder={copy.before}
           />
         </Form.Item>
         <Form.Item name={[...name, 'after']} noStyle>
           <InputNumber<number>
+            id={afterId}
             style={{ width: '100%' }}
             disabled={mode === 'none'}
             min={0}
@@ -1515,13 +1559,16 @@ const SpacingField: React.FC<{
             step={0.5}
             precision={1}
             parser={toHalfStep}
+            aria-label={`${label} ${isEnglish ? 'after spacing' : '段后'}`}
             placeholder={copy.after}
           />
         </Form.Item>
         <Form.Item name={[...name, 'unit']} noStyle>
           <Select
+            id={unitId}
             style={{ width: 90 }}
             disabled={mode === 'none'}
+            aria-label={`${label} ${isEnglish ? 'unit' : '单位'}`}
             options={[{ label: 'pt', value: 'pt' }, { label: isEnglish ? 'point (磅)' : '磅', value: '磅' }]}
           />
         </Form.Item>
@@ -1534,16 +1581,22 @@ const IndentField: React.FC<{
   form: FormInstance<RuleFormValues>;
   label: string;
   name: NamePath;
+  watchName?: NamePath;
   copy: RulesCopy;
-}> = ({ form, label, name, copy }) => {
-  const mode = Form.useWatch([...name, 'mode'], form) as IndentMode | undefined;
+}> = ({ form, label, name, watchName, copy }) => {
+  const mode = Form.useWatch([...(watchName ?? name), 'mode'], form) as IndentMode | undefined;
+  const modeId = toFieldDomId(name, 'mode');
+  const valueId = toFieldDomId(name, 'value');
+  const unitId = toFieldDomId(name, 'unit');
 
   return (
     <Form.Item label={label}>
       <Space.Compact block>
         <Form.Item name={[...name, 'mode']} noStyle>
           <Select
+            id={modeId}
             style={{ width: 120 }}
+            aria-label={`${label} 模式`}
             options={[
               { label: copy.noRequirement, value: 'none' },
               { label: copy.custom, value: 'custom' },
@@ -1552,6 +1605,7 @@ const IndentField: React.FC<{
         </Form.Item>
         <Form.Item name={[...name, 'value']} noStyle>
           <InputNumber<number>
+            id={valueId}
             style={{ width: '100%' }}
             disabled={mode === 'none'}
             min={0}
@@ -1559,10 +1613,11 @@ const IndentField: React.FC<{
             step={1}
             precision={0}
             parser={toInteger}
+            aria-label={`${label} 值`}
           />
         </Form.Item>
         <Form.Item name={[...name, 'unit']} noStyle>
-          <Select style={{ width: 90 }} disabled options={[{ label: copy.character, value: '字符' }]} />
+          <Select id={unitId} style={{ width: 90 }} disabled aria-label={`${label} 单位`} options={[{ label: copy.character, value: '字符' }]} />
         </Form.Item>
       </Space.Compact>
     </Form.Item>
@@ -1576,6 +1631,8 @@ const AlignmentField: React.FC<{
 }> = ({ label, name, copy }) => (
   <Form.Item name={name} label={label}>
     <Select
+      id={toFieldDomId(name)}
+      aria-label={label}
       options={[
         { label: copy.noRequirement, value: 'none' },
         { label: copy.left, value: 'left' },
@@ -1652,27 +1709,27 @@ const HeadingRuleCard: React.FC<{
     >
       <Row gutter={16}>
         <Col span={8}>
-          <Form.Item name={['headingRules', name, 'level']} label={copy.level}>
-            <InputNumber<number> style={{ width: '100%' }} min={1} max={9} step={1} precision={0} parser={toInteger} />
+          <Form.Item name={[name, 'level']} label={copy.level}>
+            <InputNumber<number> style={{ width: '100%' }} min={1} max={9} step={1} precision={0} parser={toInteger} aria-label={`${copy.level} ${level ?? ''}`.trim()} />
           </Form.Item>
         </Col>
         <Col span={8}>
-          <FontChoiceField form={form} label={copy.font} name={['headingRules', name, 'font']} copy={copy} isEnglish={isEnglish} />
+          <FontChoiceField form={form} label={copy.font} name={[name, 'font']} watchName={['headingRules', name, 'font']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-          <SizeChoiceField form={form} label={copy.size} name={['headingRules', name, 'size']} copy={copy} isEnglish={isEnglish} />
+          <SizeChoiceField form={form} label={copy.size} name={[name, 'size']} watchName={['headingRules', name, 'size']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-                    <AlignmentField label={copy.alignment} name={['headingRules', name, 'alignment']} copy={copy} />
+                    <AlignmentField label={copy.alignment} name={[name, 'alignment']} copy={copy} />
         </Col>
         <Col span={8}>
-          <LineHeightField form={form} label={copy.lineHeight} name={['headingRules', name, 'lineHeight']} copy={copy} isEnglish={isEnglish} />
+          <LineHeightField form={form} label={copy.lineHeight} name={[name, 'lineHeight']} watchName={['headingRules', name, 'lineHeight']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-          <SpacingField form={form} label={copy.spacing} name={['headingRules', name, 'spacing']} copy={copy} isEnglish={isEnglish} />
+          <SpacingField form={form} label={copy.spacing} name={[name, 'spacing']} watchName={['headingRules', name, 'spacing']} copy={copy} isEnglish={isEnglish} />
         </Col>
         <Col span={8}>
-          <IndentField form={form} label={copy.indent} name={['headingRules', name, 'indent']} copy={copy} />
+          <IndentField form={form} label={copy.indent} name={[name, 'indent']} watchName={['headingRules', name, 'indent']} copy={copy} />
         </Col>
       </Row>
     </Card>
@@ -1681,6 +1738,7 @@ const HeadingRuleCard: React.FC<{
 
 const RulesConfig: React.FC = () => {
   const { isEnglish } = useI18n();
+  const { message } = AntdApp.useApp();
   const copy = useMemo(() => getRulesCopy(isEnglish), [isEnglish]);
   const [form] = Form.useForm<RuleFormValues>();
   const [saving, setSaving] = useState(false);
@@ -1691,6 +1749,13 @@ const RulesConfig: React.FC = () => {
   const templateId = searchParams.get('templateId');
   const referencePreset = Form.useWatch(['reference', 'preset'], form);
   const headingRulesValue = Form.useWatch('headingRules', form) as unknown;
+  const marginMode = Form.useWatch(['margin', 'mode'], form) as RuleFormValues['margin']['mode'] | undefined;
+  const headerPresetMode = Form.useWatch(['header', 'preset'], form) as HeaderPreset | undefined;
+  const pageNumberMode = Form.useWatch(['pageNumber', 'mode'], form) as PageNumberMode | undefined;
+  const abstractLengthMode = Form.useWatch(['abstract', 'lengthMode'], form) as RuleFormValues['abstract']['lengthMode'] | undefined;
+  const keywordsCountMode = Form.useWatch(['keywords', 'countMode'], form) as RuleFormValues['keywords']['countMode'] | undefined;
+  const figureCaptionMode = Form.useWatch(['figureCaption', 'mode'], form) as CaptionMode | undefined;
+  const tableCaptionMode = Form.useWatch(['tableCaption', 'mode'], form) as CaptionMode | undefined;
   const headingRules = ensureHeadingRuleArray(headingRulesValue);
 
   const nextHeadingLevel = useMemo(() => {
@@ -1711,7 +1776,11 @@ const RulesConfig: React.FC = () => {
         const template = await api.getTemplate(templateId);
         setCurrentTemplate(template);
         form.setFieldsValue(buildFormValues({ ...defaultRules, ...template.config }, template, copy.defaultTemplateName));
-      } catch {
+      } catch (error) {
+        if (isUnauthorizedError(error)) {
+          return;
+        }
+
         message.error(copy.loadTemplateFailed);
       } finally {
         setLoading(false);
@@ -1809,7 +1878,11 @@ const RulesConfig: React.FC = () => {
       form.setFieldValue('headingRules', normalizedHeadingRules);
       message.success(currentTemplate ? copy.saveEditSuccess : copy.saveCreateSuccess);
       navigate('/templates');
-    } catch {
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        return;
+      }
+
       message.error(copy.saveFailed);
     } finally {
       setSaving(false);
@@ -1863,6 +1936,8 @@ const RulesConfig: React.FC = () => {
                 <Col span={8}>
                   <Form.Item name="pageSize" label={copy.paperSize}>
                     <Select
+                      id={toFieldDomId('pageSize')}
+                      aria-label={copy.paperSize}
                       options={[
                         { label: copy.noRequirement, value: 'none' },
                         { label: 'A4（210 × 297 mm）', value: 'A4' },
@@ -1877,6 +1952,8 @@ const RulesConfig: React.FC = () => {
                     <Space.Compact block>
                       <Form.Item name={['margin', 'mode']} noStyle>
                         <Select
+                          id={toFieldDomId(['margin', 'mode'])}
+                          aria-label={`${copy.margin} ${isEnglish ? 'Mode' : '模式'}`}
                           style={{ width: 120 }}
                           options={[
                             { label: copy.noRequirement, value: 'none' },
@@ -1885,52 +1962,54 @@ const RulesConfig: React.FC = () => {
                         />
                       </Form.Item>
                       <Form.Item name={['margin', 'top']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Top' : '上'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> id={toFieldDomId(['margin', 'top'])} aria-label={`${copy.margin} ${isEnglish ? 'Top' : '上'}`} style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Top' : '上'} disabled={marginMode === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'bottom']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Bottom' : '下'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> id={toFieldDomId(['margin', 'bottom'])} aria-label={`${copy.margin} ${isEnglish ? 'Bottom' : '下'}`} style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Bottom' : '下'} disabled={marginMode === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'left']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Left' : '左'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> id={toFieldDomId(['margin', 'left'])} aria-label={`${copy.margin} ${isEnglish ? 'Left' : '左'}`} style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Left' : '左'} disabled={marginMode === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'right']} noStyle>
-                        <InputNumber<number> style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Right' : '右'} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} />
+                        <InputNumber<number> id={toFieldDomId(['margin', 'right'])} aria-label={`${copy.margin} ${isEnglish ? 'Right' : '右'}`} style={{ width: '100%' }} min={0} max={10} step={0.5} precision={1} parser={toHalfStep} placeholder={isEnglish ? 'Right' : '右'} disabled={marginMode === 'none'} />
                       </Form.Item>
                       <Form.Item name={['margin', 'unit']} noStyle>
-                        <Select style={{ width: 100 }} disabled={Form.useWatch(['margin', 'mode'], form) === 'none'} options={[{ label: 'cm', value: 'cm' }, { label: 'mm', value: 'mm' }]} />
+                        <Select id={toFieldDomId(['margin', 'unit'])} aria-label={`${copy.margin} ${isEnglish ? 'Unit' : '单位'}`} style={{ width: 100 }} disabled={marginMode === 'none'} options={[{ label: 'cm', value: 'cm' }, { label: 'mm', value: 'mm' }]} />
                       </Form.Item>
                     </Space.Compact>
                   </Form.Item>
                 </Col>
                 <Col span={8}>
                   <Form.Item name={['header', 'preset']} label={copy.headerPreset}>
-                    <Select options={HEADER_PRESET_OPTIONS.map((item) => ({ label: getHeaderPresetLabel(item.value, copy), value: item.value }))} />
+                    <Select id={toFieldDomId(['header', 'preset'])} aria-label={copy.headerPreset} options={HEADER_PRESET_OPTIONS.map((item) => ({ label: getHeaderPresetLabel(item.value, copy), value: item.value }))} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
                   <Form.Item name={['header', 'oddText']} label={copy.oddHeader}>
-                    <Input placeholder={copy.oddHeader} disabled={Form.useWatch(['header', 'preset'], form) === 'none'} />
+                    <Input placeholder={copy.oddHeader} disabled={headerPresetMode === 'none'} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
                   <Form.Item name={['header', 'evenText']} label={copy.evenHeader}>
-                    <Input placeholder={copy.evenHeader} disabled={Form.useWatch(['header', 'preset'], form) === 'none'} />
+                    <Input placeholder={copy.evenHeader} disabled={headerPresetMode === 'none'} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
                   <Form.Item name={['pageNumber', 'mode']} label={copy.pageNumberRule}>
-                    <Select options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
+                    <Select id={toFieldDomId(['pageNumber', 'mode'])} aria-label={copy.pageNumberRule} options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
                   <Form.Item name={['pageNumber', 'position']} label={copy.pageNumberPosition}>
-                    <Select disabled={Form.useWatch(['pageNumber', 'mode'], form) === 'none'} options={[{ label: copy.top, value: 'top' }, { label: copy.bottom, value: 'bottom' }]} />
+                    <Select id={toFieldDomId(['pageNumber', 'position'])} aria-label={copy.pageNumberPosition} disabled={pageNumberMode === 'none'} options={[{ label: copy.top, value: 'top' }, { label: copy.bottom, value: 'bottom' }]} />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
                   <Form.Item name={['pageNumber', 'alignment']} label={copy.pageNumberAlignment}>
                     <Select
-                      disabled={Form.useWatch(['pageNumber', 'mode'], form) === 'none'}
+                      id={toFieldDomId(['pageNumber', 'alignment'])}
+                      aria-label={copy.pageNumberAlignment}
+                      disabled={pageNumberMode === 'none'}
                       options={[
                         { label: copy.noRequirement, value: 'none' },
                         { label: copy.left, value: 'left' },
@@ -1943,7 +2022,9 @@ const RulesConfig: React.FC = () => {
                 <Col span={8}>
                   <Form.Item name={['pageNumber', 'style']} label={copy.pageNumberStyle}>
                     <Select
-                      disabled={Form.useWatch(['pageNumber', 'mode'], form) === 'none'}
+                      id={toFieldDomId(['pageNumber', 'style'])}
+                      aria-label={copy.pageNumberStyle}
+                      disabled={pageNumberMode === 'none'}
                       options={[
                         { label: copy.noRequirement, value: 'none' },
                         { label: copy.arabic, value: 'arabic' },
@@ -2011,6 +2092,8 @@ const RulesConfig: React.FC = () => {
                   <Form.Item label={copy.coverItems}>
                     <Form.Item name="coverItems" noStyle>
                       <Select
+                        id={toFieldDomId('coverItems')}
+                        aria-label={copy.coverItems}
                         mode="tags"
                         tokenSeparators={[';', '；', ',']}
                         options={[NO_REQUIREMENT, ...COVER_ITEM_OPTIONS].map((item) => ({
@@ -2026,6 +2109,8 @@ const RulesConfig: React.FC = () => {
                   <Form.Item label={copy.requiredSections}>
                     <Form.Item name="requiredSections" noStyle>
                       <Select
+                        id={toFieldDomId('requiredSections')}
+                        aria-label={copy.requiredSections}
                         mode="tags"
                         tokenSeparators={[';', '；', ',']}
                         options={[NO_REQUIREMENT, ...REQUIRED_SECTION_OPTIONS].map((item) => ({
@@ -2093,6 +2178,8 @@ const RulesConfig: React.FC = () => {
                       <Space.Compact block>
                         <Form.Item name={['abstract', 'lengthMode']} noStyle>
                           <Select
+                            id={toFieldDomId(['abstract', 'lengthMode'])}
+                            aria-label={`${copy.abstractLength} ${isEnglish ? 'Mode' : '模式'}`}
                             style={{ width: 120 }}
                             options={[
                               { label: copy.noRequirement, value: 'none' },
@@ -2102,25 +2189,29 @@ const RulesConfig: React.FC = () => {
                         </Form.Item>
                         <Form.Item name={['abstract', 'minLength']} noStyle>
                           <InputNumber<number>
+                            id={toFieldDomId(['abstract', 'minLength'])}
+                            aria-label={`${copy.abstractLength} ${isEnglish ? 'Min' : '最小值'}`}
                             style={{ width: '100%' }}
                             min={0}
                             max={10000}
                             step={1}
                             precision={0}
                             parser={toInteger}
-                            disabled={Form.useWatch(['abstract', 'lengthMode'], form) === 'none'}
+                            disabled={abstractLengthMode === 'none'}
                             placeholder={isEnglish ? 'Min' : '最少'}
                           />
                         </Form.Item>
                         <Form.Item name={['abstract', 'maxLength']} noStyle>
                           <InputNumber<number>
+                            id={toFieldDomId(['abstract', 'maxLength'])}
+                            aria-label={`${copy.abstractLength} ${isEnglish ? 'Max' : '最大值'}`}
                             style={{ width: '100%' }}
                             min={0}
                             max={10000}
                             step={1}
                             precision={0}
                             parser={toInteger}
-                            disabled={Form.useWatch(['abstract', 'lengthMode'], form) === 'none'}
+                            disabled={abstractLengthMode === 'none'}
                             placeholder={isEnglish ? 'Max' : '最多'}
                           />
                         </Form.Item>
@@ -2137,6 +2228,8 @@ const RulesConfig: React.FC = () => {
                     <SizeChoiceField form={form} label={copy.size} name={['keywords', 'size']} copy={copy} isEnglish={isEnglish} />
                     <Form.Item name={['keywords', 'separator']} label={copy.keywordSeparator}>
                       <Select
+                        id={toFieldDomId(['keywords', 'separator'])}
+                        aria-label={copy.keywordSeparator}
                         options={[
                           { label: copy.noRequirement, value: 'none' },
                           { label: copy.semicolon, value: 'semicolon' },
@@ -2147,6 +2240,8 @@ const RulesConfig: React.FC = () => {
                     </Form.Item>
                     <Form.Item name={['keywords', 'labelBold']} label={copy.keywordLabelStyle}>
                       <Select
+                        id={toFieldDomId(['keywords', 'labelBold'])}
+                        aria-label={copy.keywordLabelStyle}
                         options={[
                           { label: copy.noRequirement, value: 'none' },
                           { label: copy.bold, value: 'bold' },
@@ -2158,6 +2253,8 @@ const RulesConfig: React.FC = () => {
                       <Space.Compact block>
                         <Form.Item name={['keywords', 'countMode']} noStyle>
                           <Select
+                            id={toFieldDomId(['keywords', 'countMode'])}
+                            aria-label={`${copy.keywordCount} ${isEnglish ? 'Mode' : '模式'}`}
                             style={{ width: 120 }}
                             options={[
                               { label: copy.noRequirement, value: 'none' },
@@ -2167,25 +2264,29 @@ const RulesConfig: React.FC = () => {
                         </Form.Item>
                         <Form.Item name={['keywords', 'minCount']} noStyle>
                           <InputNumber<number>
+                            id={toFieldDomId(['keywords', 'minCount'])}
+                            aria-label={`${copy.keywordCount} ${isEnglish ? 'Min' : '最小值'}`}
                             style={{ width: '100%' }}
                             min={1}
                             max={20}
                             step={1}
                             precision={0}
                             parser={toInteger}
-                            disabled={Form.useWatch(['keywords', 'countMode'], form) === 'none'}
+                            disabled={keywordsCountMode === 'none'}
                             placeholder={isEnglish ? 'Min' : '最少'}
                           />
                         </Form.Item>
                         <Form.Item name={['keywords', 'maxCount']} noStyle>
                           <InputNumber<number>
+                            id={toFieldDomId(['keywords', 'maxCount'])}
+                            aria-label={`${copy.keywordCount} ${isEnglish ? 'Max' : '最大值'}`}
                             style={{ width: '100%' }}
                             min={1}
                             max={20}
                             step={1}
                             precision={0}
                             parser={toInteger}
-                            disabled={Form.useWatch(['keywords', 'countMode'], form) === 'none'}
+                            disabled={keywordsCountMode === 'none'}
                             placeholder={isEnglish ? 'Max' : '最多'}
                           />
                         </Form.Item>
@@ -2209,6 +2310,8 @@ const RulesConfig: React.FC = () => {
                     <Space.Compact block>
                       <Form.Item name={['reference', 'preset']} noStyle>
                         <Select
+                          id={toFieldDomId(['reference', 'preset'])}
+                          aria-label={`${copy.referenceFormat} ${isEnglish ? 'Mode' : '模式'}`}
                           style={{ width: 160 }}
                           options={[
                             { label: copy.noRequirement, value: '__none__' },
@@ -2219,10 +2322,10 @@ const RulesConfig: React.FC = () => {
                       </Form.Item>
                       {referencePreset === '__custom__' ? (
                         <Form.Item name={['reference', 'custom']} noStyle>
-                          <Input placeholder={copy.customReferencePlaceholder} />
+                          <Input id={toFieldDomId(['reference', 'custom'])} aria-label={copy.referenceFormat} placeholder={copy.customReferencePlaceholder} />
                         </Form.Item>
                       ) : (
-                        <Input disabled value={referencePreset === '__none__' ? copy.currentNone : copy.currentPreset} />
+                        <Input id={toFieldDomId(['reference', 'display'])} aria-label={copy.referenceFormat} disabled value={referencePreset === '__none__' ? copy.currentNone : copy.currentPreset} />
                       )}
                     </Space.Compact>
                   </Form.Item>
@@ -2232,11 +2335,13 @@ const RulesConfig: React.FC = () => {
                     <Form.Item label={copy.checkMode}>
                       <Space.Compact block>
                         <Form.Item name={['figureCaption', 'mode']} noStyle>
-                          <Select style={{ width: 120 }} options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
+                          <Select id={toFieldDomId(['figureCaption', 'mode'])} aria-label={`${copy.figureCaption} ${copy.checkMode}`} style={{ width: 120 }} options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
                         </Form.Item>
                         <Form.Item name={['figureCaption', 'position']} noStyle>
                           <Select
-                            disabled={Form.useWatch(['figureCaption', 'mode'], form) === 'none'}
+                            id={toFieldDomId(['figureCaption', 'position'])}
+                            aria-label={`${copy.figureCaption} ${copy.position}`}
+                            disabled={figureCaptionMode === 'none'}
                             options={[
                               { label: isEnglish ? 'Above Figure' : '图上方', value: 'above' },
                               { label: isEnglish ? 'Below Figure' : '图下方', value: 'below' },
@@ -2253,11 +2358,13 @@ const RulesConfig: React.FC = () => {
                     <Form.Item label={copy.checkMode}>
                       <Space.Compact block>
                         <Form.Item name={['tableCaption', 'mode']} noStyle>
-                          <Select style={{ width: 120 }} options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
+                          <Select id={toFieldDomId(['tableCaption', 'mode'])} aria-label={`${copy.tableCaption} ${copy.checkMode}`} style={{ width: 120 }} options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]} />
                         </Form.Item>
                         <Form.Item name={['tableCaption', 'position']} noStyle>
                           <Select
-                            disabled={Form.useWatch(['tableCaption', 'mode'], form) === 'none'}
+                            id={toFieldDomId(['tableCaption', 'position'])}
+                            aria-label={`${copy.tableCaption} ${copy.position}`}
+                            disabled={tableCaptionMode === 'none'}
                             options={[
                               { label: isEnglish ? 'Above Table' : '表上方', value: 'above' },
                               { label: isEnglish ? 'Below Table' : '表下方', value: 'below' },
@@ -2274,6 +2381,8 @@ const RulesConfig: React.FC = () => {
                     <Form.Item label={copy.checkMode}>
                       <Form.Item name={['toc', 'mode']} noStyle>
                         <Select
+                          id={toFieldDomId(['toc', 'mode'])}
+                          aria-label={`${copy.toc} ${copy.checkMode}`}
                           style={{ width: 160 }}
                           options={[{ label: copy.noRequirement, value: 'none' }, { label: copy.custom, value: 'custom' }]}
                         />

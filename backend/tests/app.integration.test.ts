@@ -212,7 +212,10 @@ describe('backend app integration', () => {
 
     const fixture = await createDocxFixture({
       paragraphs: [
-        { text: '论文题目：测试论文' },
+        { text: '论文题目：测试论文', fontFamily: 'SimSun', fontSizeHalfPoints: 24, fontColor: '222222', bold: true, before: 120, after: 60, line: 360, firstLineChars: 200 },
+        { text: '目 录' },
+        { text: '第一章 绪论', styleId: 'TOC1', fontFamily: 'SimHei', fontSizeHalfPoints: 22, bold: true },
+        { text: '1.1 研究背景', styleId: 'TOC2', fontFamily: 'SimHei', fontSizeHalfPoints: 22, bold: true },
         { text: '摘要' },
         { text: '这是一段用于修复导出测试的摘要正文。' },
         { text: '关键词 测试；导出' },
@@ -245,14 +248,57 @@ describe('backend app integration', () => {
       expect(checkResponse.status).toBe(201);
       expect(checkResponse.body.status).toBe('completed');
 
+      const resultResponse = await request(app)
+        .get(`/api/checks/${checkResponse.body.id}/result`)
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(resultResponse.status).toBe(200);
+      expect(resultResponse.body.recognizedContents.length).toBeGreaterThan(0);
+      expect(resultResponse.body.recognizedContents[0]).toMatchObject({
+        section: 'body',
+        index: 1,
+        pageNumber: 1,
+        fontFamily: 'SimSun',
+        fontSizePt: 12,
+        fontColor: '#222222',
+        bold: true,
+        spacingBeforePt: 6,
+        spacingAfterPt: 3,
+        firstLineChars: 2,
+      });
+      expect(resultResponse.body.recognizedContents).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          section: 'toc',
+          index: 3,
+          text: '第一章 绪论',
+          displayHeadingLevel: 1,
+        }),
+        expect.objectContaining({
+          section: 'toc',
+          index: 4,
+          text: '1.1 研究背景',
+          displayHeadingLevel: 2,
+        }),
+      ]));
+
       const fixResponse = await request(app)
         .get(`/api/checks/${checkResponse.body.id}/fix-download`)
         .set('Authorization', `Bearer ${token}`);
 
       expect(fixResponse.status).toBe(200);
       expect(fixResponse.headers['content-type']).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      expect(fixResponse.headers['content-disposition']).toContain('_fixed.docx');
+      expect(fixResponse.headers['content-disposition']).toContain('_fixed_');
       expect(Number.parseInt(fixResponse.headers['content-length'] ?? '0', 10)).toBeGreaterThan(0);
+
+      const selectiveFixResponse = await request(app)
+        .post(`/api/checks/${checkResponse.body.id}/fix-download`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          fixOptions: ['captions'],
+        });
+
+      expect(selectiveFixResponse.status).toBe(200);
+      expect(selectiveFixResponse.headers['content-type']).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     } finally {
       await fixture.cleanup();
     }

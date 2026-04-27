@@ -28,6 +28,7 @@ const alignmentAliases: Record<string, string[]> = {
   left: ['left', '居左', '左对齐'],
   center: ['center', 'centre', '居中', '中间'],
   right: ['right', '居右', '右对齐'],
+  both: ['both', 'justify', 'justified', '两端对齐'],
 };
 
 const sectionAliases: Record<string, string[]> = {
@@ -40,8 +41,8 @@ const sectionAliases: Record<string, string[]> = {
   图清单: ['图清单', '插图清单', 'list of figures'],
   表清单: ['表清单', '表格清单', 'list of tables'],
   附录: ['附录', 'appendix'],
-  指导教师指导意见表: ['指导教师指导意见表', '指导教师意见表', '指导教师评语表'],
-  评阅教师评阅意见表: ['评阅教师评阅意见表', '评阅教师意见表', '评阅意见表', '评阅教师评语表'],
+  指导教师指导意见表: ['指导教师指导意见表', '指导教师意见表', '指导教师评语表', '毕业论文指导教师指导意见表', '毕业论文设计指导教师指导意见表'],
+  评阅教师评阅意见表: ['评阅教师评阅意见表', '评阅教师指导意见表', '评阅教师意见表', '评阅意见表', '评阅教师评语表', '毕业论文评阅教师指导意见表', '毕业论文设计评阅教师指导意见表'],
 };
 const coverFieldAliases: Record<string, string[]> = {
   论文题目: ['论文题目', '题目', '毕业论文题目', '论文（设计）题目', '毕业设计题目'],
@@ -76,7 +77,25 @@ const normalizeText = (value: string): string =>
     .trim()
     .toLowerCase();
 
-const coverCompletionDatePattern = /[二〇零一二三四五六七八九十]{4}年[一二三四五六七八九十]{1,3}月/;
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const hasTocLeaderOrPageSuffix = (text: string): boolean => {
+  const resolved = text.trim();
+  return /[.·•…]{2,}\s*\d+\s*$/.test(resolved)
+    || /\t+\s*\d+\s*$/.test(resolved)
+    || /^(?:摘\s*要|致\s*谢|参\s*考\s*文\s*献|附\s*录\S*|references|appendix)(?:\s+\S+)*\s+\d+\s*$/i.test(resolved);
+};
+
+const buildLooseStandaloneLabelPattern = (alias: string): RegExp => {
+  const compactAlias = alias.trim().replace(/\s+/g, '');
+  const pattern = [...compactAlias].map((char) => escapeRegExp(char)).join('\\s*');
+  return new RegExp(`^\\s*${pattern}\\s*[:：]?\\s*$`, 'i');
+};
+
+const matchesLooseStandaloneLabel = (text: string, alias: string): boolean =>
+  buildLooseStandaloneLabelPattern(alias).test(text);
+
+const coverCompletionDatePattern = /[二〇○零一二三四五六七八九十×xX]{4}年[一二三四五六七八九十×xX]{1,3}月/;
 const captionNumberPattern = '\\d+(?:[.-]\\d+)*';
 const headerPlaceholderSource = [
   '教学点名称',
@@ -131,6 +150,20 @@ const matchesHeaderFragment = (headerText: string, fragment: HeaderFragmentRule)
     return false;
   }
 
+  const expectsStudentName = fragment.labels.includes(normalizeText('学生姓名'));
+  const expectsPaperTitle = fragment.labels.includes(normalizeText('论文题目'));
+  if (expectsStudentName && expectsPaperTitle) {
+    const resolvedParts = headerText
+      .replace(/\s+/g, '')
+      .split(/[：:]/)
+      .map((part) => normalizeText(part))
+      .filter(Boolean);
+
+    if (resolvedParts.length >= 2 && resolvedParts[0].length >= 2 && resolvedParts.slice(1).join('').length >= 4) {
+      return true;
+    }
+  }
+
   let cursor = 0;
   for (const label of fragment.labels) {
     const index = normalizedHeader.indexOf(label, cursor);
@@ -161,7 +194,8 @@ const looksLikeTocEntryText = (text: string): boolean => {
     || /^[0-9一二三四五六七八九十]+(\.[0-9]+)*\s+\S+.+\d+$/.test(resolved)
     || /^第[一二三四五六七八九十百]+[章节部分篇]\s+\S+.+\d+$/.test(resolved)
     || /^第[一二三四五六七八九十百]+[章节部分篇]\s+\S+/.test(resolved)
-    || /^\d+(?:\.\d+)+\s+\S+/.test(resolved);
+    || /^\d+(?:\.\d+)+\s+\S+/.test(resolved)
+    || /^(?:摘\s*要|致\s*谢|参\s*考\s*文\s*献|附\s*录\S*|references|appendix)\s+\d+\s*$/i.test(resolved);
 };
 
 const findFrontMatterBoundaryIndex = (documentModel: ParsedDocxModel): number =>
@@ -205,6 +239,19 @@ const fontMatches = (expected: string, actual?: string): boolean => {
 
   return false;
 };
+
+const getParagraphFontFamilies = (paragraph: ParsedParagraph): string[] =>
+  paragraph.fontFamilies?.length
+    ? paragraph.fontFamilies
+    : paragraph.fontFamily
+      ? [paragraph.fontFamily]
+      : [];
+
+const findMismatchedFontFamily = (expected: string, paragraph: ParsedParagraph): string | undefined =>
+  getParagraphFontFamilies(paragraph).find((fontFamily) => !fontMatches(expected, fontFamily));
+
+const formatParagraphFontFamilies = (paragraph: ParsedParagraph): string =>
+  getParagraphFontFamilies(paragraph).join(' / ') || 'Unknown';
 
 const parseNumericSpec = (value: string): number | undefined => {
   const match = value.match(/(\d+(?:\.\d+)?)/);
@@ -255,6 +302,9 @@ const parseFontSizePt = (value: string): number | undefined => {
 
   return /^\d+(?:\.\d+)?$/.test(trimmed) ? Number.parseFloat(trimmed) : undefined;
 };
+
+const normalizeAlignment = (value: string | undefined): string | undefined =>
+  value === 'justify' ? 'both' : value;
 
 const parseExpectedFont = (value: string): string | undefined =>
   includesNoRequirement(value)
@@ -365,7 +415,8 @@ const parseFirstLineIndentRule = (value: string): number | undefined => {
 type ParagraphStyleRule = {
   font?: string;
   fontSizePt?: number;
-  alignment?: 'left' | 'center' | 'right';
+  bold?: boolean;
+  alignment?: 'left' | 'center' | 'right' | 'both' | 'justify' | 'distribute';
   lineHeight?: { mode: 'multiple' | 'points'; value: number };
   spacing?: { before?: number; after?: number };
   firstLineIndent?: number;
@@ -376,7 +427,8 @@ const parseParagraphStyleRule = (value: string, preferredKeywords: string[] = []
   const detailSegments = segment.split('|').map((item) => item.trim());
   const fontSegment = detailSegments.find((item) => /字体/i.test(item)) ?? segment;
   const sizeSegment = detailSegments.find((item) => /字号/i.test(item)) ?? segment;
-  const alignmentSegment = detailSegments.find((item) => /对齐|居中|居左|居右|left|center|right/i.test(item)) ?? segment;
+  const boldSegment = detailSegments.find((item) => /字形|加粗|bold|常规|normal/i.test(item)) ?? segment;
+  const alignmentSegment = detailSegments.find((item) => /对齐|居中|居左|居右|left|center|right|justify|both/i.test(item)) ?? segment;
   const lineHeightSegment = detailSegments.find((item) => /行距|line/i.test(item));
   const spacingSegment = detailSegments.find((item) => /段前|段后|before|after/i.test(item));
   const indentSegment = detailSegments.find((item) => /首行缩进|字符|indent/i.test(item));
@@ -384,7 +436,8 @@ const parseParagraphStyleRule = (value: string, preferredKeywords: string[] = []
   return {
     font: parseExpectedFont(fontSegment),
     fontSizePt: parseFontSizePt(sizeSegment),
-    alignment: parseExpectedAlignment(alignmentSegment) as 'left' | 'center' | 'right' | undefined,
+    bold: /加粗|bold/i.test(boldSegment) ? true : /常规|normal/i.test(boldSegment) ? false : undefined,
+    alignment: parseExpectedAlignment(alignmentSegment) as ParagraphStyleRule['alignment'],
     lineHeight: lineHeightSegment ? parseLineHeightRule(lineHeightSegment) : undefined,
     spacing: spacingSegment ? parseSpacingRule(spacingSegment) : undefined,
     firstLineIndent: indentSegment ? parseFirstLineIndentRule(indentSegment) : undefined,
@@ -506,9 +559,33 @@ const humanParagraphLocation = (paragraph: ParsedParagraph): string => {
 };
 
 const matchesSectionLabel = (text: string, label: string): boolean => {
+  const trimmedText = text.trim();
+  if (!trimmedText || hasTocLeaderOrPageSuffix(trimmedText)) {
+    return false;
+  }
+
   const normalizedText = normalizeText(text);
   const aliases = sectionAliases[label] ?? [label];
-  return aliases.some((alias) => normalizedText.includes(normalizeText(alias)));
+  return aliases.some((alias) => {
+    if (matchesLooseStandaloneLabel(trimmedText, alias)) {
+      return true;
+    }
+
+    const normalizedAlias = normalizeText(alias);
+    if (label === '毕业论文原创性声明') {
+      return normalizedText.startsWith(normalizedAlias);
+    }
+
+    if (label === '附录') {
+      return normalizedText.startsWith(normalizedAlias);
+    }
+
+    if (label === '指导教师指导意见表' || label === '评阅教师评阅意见表') {
+      return normalizedText.includes(normalizedAlias) && normalizedText.length <= normalizedAlias.length + 20;
+    }
+
+    return false;
+  });
 };
 
 const isLikelySectionHeadingParagraph = (paragraph: ParsedParagraph): boolean => {
@@ -538,14 +615,70 @@ const findSectionParagraph = (documentModel: ParsedDocxModel, label: string): Pa
     ?? candidates[0];
 };
 
-const selectBodyParagraphs = (documentModel: ParsedDocxModel): ParsedParagraph[] =>
-  documentModel.paragraphs.filter((paragraph) => {
-    const coverParagraphIndexes = new Set(getCoverParagraphs(documentModel).map((item) => item.index));
-    if (!paragraph.text || getEffectiveHeadingLevel(paragraph)) {
+const getSectionParagraphIndexes = (documentModel: ParsedDocxModel, label: string): Set<number> => {
+  const sectionParagraph = findSectionParagraph(documentModel, label);
+  if (!sectionParagraph) {
+    return new Set();
+  }
+
+  let startIndex = documentModel.paragraphs.findIndex((paragraph) => paragraph.index === sectionParagraph.index);
+  if (startIndex < 0) {
+    return new Set();
+  }
+
+  const previousParagraph = documentModel.paragraphs[startIndex - 1];
+  if (
+    previousParagraph
+    && /中国地质大学.*高等学历继续教育/.test(previousParagraph.text.replace(/\s+/g, ''))
+  ) {
+    startIndex -= 1;
+  }
+
+  const indexes = new Set<number>();
+  for (let index = startIndex; index < documentModel.paragraphs.length; index += 1) {
+    const paragraph = documentModel.paragraphs[index];
+    if (
+      index > startIndex
+      && Object.keys(sectionAliases).some((candidateLabel) =>
+        candidateLabel !== label && matchesSectionLabel(paragraph.text, candidateLabel)
+      )
+    ) {
+      break;
+    }
+
+    indexes.add(paragraph.index);
+
+    if (index > startIndex && paragraph.hasPageBreakAfter) {
+      break;
+    }
+  }
+
+  return indexes;
+};
+
+const selectBodyParagraphs = (documentModel: ParsedDocxModel): ParsedParagraph[] => {
+  const coverParagraphIndexes = new Set(getCoverParagraphs(documentModel).map((item) => item.index));
+  const tocParagraphIndexes = new Set([
+    findTocHeadingParagraph(documentModel)?.index,
+    ...getTocEntryParagraphs(documentModel).map((item) => item.index),
+  ].filter((index): index is number => index !== undefined));
+  const nonBodySectionIndexes = new Set([
+    ...getSectionParagraphIndexes(documentModel, '毕业论文原创性声明'),
+    ...getSectionParagraphIndexes(documentModel, '指导教师指导意见表'),
+    ...getSectionParagraphIndexes(documentModel, '评阅教师评阅意见表'),
+  ]);
+
+  return documentModel.paragraphs.filter((paragraph) => {
+    if (!paragraph.text || getEffectiveHeadingLevel(paragraph) || paragraph.isInTable) {
       return false;
     }
 
-    if (coverParagraphIndexes.has(paragraph.index) || hasTocStyle(paragraph)) {
+    if (
+      coverParagraphIndexes.has(paragraph.index)
+      || tocParagraphIndexes.has(paragraph.index)
+      || nonBodySectionIndexes.has(paragraph.index)
+      || hasTocStyle(paragraph)
+    ) {
       return false;
     }
 
@@ -568,12 +701,38 @@ const selectBodyParagraphs = (documentModel: ParsedDocxModel): ParsedParagraph[]
       && !new RegExp(`^图\\s*${captionNumberPattern}`).test(text)
       && !new RegExp(`^表\\s*${captionNumberPattern}`).test(text);
   });
+};
 
 const findAbstractHeadingIndex = (documentModel: ParsedDocxModel): number =>
   documentModel.paragraphs.findIndex((paragraph) => matchesSectionLabel(paragraph.text, '摘要'));
 
-const findKeywordsParagraphIndex = (documentModel: ParsedDocxModel): number =>
-  documentModel.paragraphs.findIndex((paragraph) => /(关\s*键\s*词|keywords?)/i.test(paragraph.text));
+const findAbstractBodyEndIndex = (documentModel: ParsedDocxModel, abstractHeadingIndex: number): number => {
+  for (let index = abstractHeadingIndex + 1; index < documentModel.paragraphs.length; index += 1) {
+    const paragraph = documentModel.paragraphs[index];
+    const previousParagraph = documentModel.paragraphs[index - 1];
+
+    if (index > abstractHeadingIndex + 1 && previousParagraph?.hasPageBreakAfter) {
+      return index;
+    }
+
+    if (index > abstractHeadingIndex + 1 && getEffectiveHeadingLevel(paragraph)) {
+      return index;
+    }
+
+    if (matchesSectionLabel(paragraph.text, '关键词')) {
+      return index;
+    }
+
+    if (
+      index > abstractHeadingIndex + 1
+      && Object.keys(sectionAliases).some((label) => label !== '摘要' && matchesSectionLabel(paragraph.text, label))
+    ) {
+      return index;
+    }
+  }
+
+  return documentModel.paragraphs.length;
+};
 
 const getAbstractBodyText = (documentModel: ParsedDocxModel): string => {
   const abstractHeadingIndex = findAbstractHeadingIndex(documentModel);
@@ -581,12 +740,7 @@ const getAbstractBodyText = (documentModel: ParsedDocxModel): string => {
     return '';
   }
 
-  const keywordsIndex = findKeywordsParagraphIndex(documentModel);
-  const stopIndex = keywordsIndex > abstractHeadingIndex
-    ? keywordsIndex
-    : documentModel.paragraphs.findIndex((paragraph, index) => index > abstractHeadingIndex && Boolean(paragraph.headingLevel));
-
-  const endIndex = stopIndex > abstractHeadingIndex ? stopIndex : documentModel.paragraphs.length;
+  const endIndex = findAbstractBodyEndIndex(documentModel, abstractHeadingIndex);
 
   return documentModel.paragraphs
     .slice(abstractHeadingIndex + 1, endIndex)
@@ -601,12 +755,7 @@ const getAbstractBodyParagraphs = (documentModel: ParsedDocxModel): ParsedParagr
     return [];
   }
 
-  const keywordsIndex = findKeywordsParagraphIndex(documentModel);
-  const stopIndex = keywordsIndex > abstractHeadingIndex
-    ? keywordsIndex
-    : documentModel.paragraphs.findIndex((paragraph, index) => index > abstractHeadingIndex && Boolean(paragraph.headingLevel));
-
-  const endIndex = stopIndex > abstractHeadingIndex ? stopIndex : documentModel.paragraphs.length;
+  const endIndex = findAbstractBodyEndIndex(documentModel, abstractHeadingIndex);
 
   return documentModel.paragraphs
     .slice(abstractHeadingIndex + 1, endIndex)
@@ -659,11 +808,31 @@ const extractCaptionToken = (text: string, prefix: '图' | '表'): string | unde
   return match ? `${prefix}${match[1]}` : undefined;
 };
 
+const looksLikeCaptionParagraph = (text: string, prefix: '图' | '表'): boolean => {
+  const trimmed = text.trim();
+  const match = trimmed.match(new RegExp(`^${prefix}\\s*${captionNumberPattern}`));
+  if (!match) {
+    return false;
+  }
+
+  const tail = trimmed.slice(match[0].length).trimStart();
+  if (/^[至到和及、，,]/.test(tail)) {
+    return false;
+  }
+
+  if (trimmed.length > 80 || /[。；;]/.test(trimmed)) {
+    return false;
+  }
+
+  return !/(展示|如下|所示|其中|分别|保证|可见|过程|关键证据|截图|页面内容)/.test(trimmed);
+};
+
 const isValidCaption = (text: string, prefix: '图' | '表'): boolean =>
-  new RegExp(`^${prefix}\\s*${captionNumberPattern}\\s+\\S+`).test(text.trim());
+  looksLikeCaptionParagraph(text, prefix)
+  && new RegExp(`^${prefix}\\s*${captionNumberPattern}\\s+\\S+`).test(text.trim());
 
 const findCaptionParagraphs = (documentModel: ParsedDocxModel, prefix: '图' | '表'): ParsedParagraph[] =>
-  documentModel.paragraphs.filter((paragraph) => paragraph.text.trim().startsWith(prefix));
+  documentModel.paragraphs.filter((paragraph) => looksLikeCaptionParagraph(paragraph.text, prefix));
 
 const collectReferencedTokens = (documentModel: ParsedDocxModel, prefix: '图' | '表'): Array<{ token: string; paragraph: ParsedParagraph }> => {
   const results: Array<{ token: string; paragraph: ParsedParagraph }> = [];
@@ -696,12 +865,72 @@ const parseCaptionRule = (
 
 const parseTocRule = (
   value: string
-): { title: ParagraphStyleRule; body: ParagraphStyleRule } => ({
-  title: parseParagraphStyleRule(value, ['目录标题', '标题']),
-  body: parseParagraphStyleRule(value, ['目录正文', '正文']),
-});
+): {
+  title: ParagraphStyleRule;
+  chapter: ParagraphStyleRule;
+  section: ParagraphStyleRule;
+  subsection: ParagraphStyleRule;
+} => {
+  const segments = parseConfiguredTokens(value);
+  const parseSegment = (keywords: string[]): ParagraphStyleRule | undefined => {
+    const segment = segments.find((item) => keywords.some((keyword) => item.includes(keyword)));
+    return segment ? parseParagraphStyleRule(segment) : undefined;
+  };
+  const legacyBody = parseSegment(['目录正文', '正文']) ?? {};
+  const plainTitleSegment = segments.find((item) => /^标题(?:\||[:：=]|$)/.test(item));
+  return {
+    title: parseSegment(['目录标题']) ?? (plainTitleSegment ? parseParagraphStyleRule(plainTitleSegment) : {}),
+    chapter: {
+      ...legacyBody,
+      ...(parseSegment(['各章目录', '章目录']) ?? {}),
+    },
+    section: {
+      ...legacyBody,
+      ...(parseSegment(['一级节标题目录']) ?? {}),
+    },
+    subsection: {
+      ...legacyBody,
+      ...(parseSegment(['二级节标题目录']) ?? {}),
+    },
+  };
+};
 
 const looksLikeTocEntry = (text: string): boolean => looksLikeTocEntryText(text);
+
+const getTocEntryLevel = (paragraph: ParsedParagraph): number => {
+  const styleSource = `${paragraph.styleId ?? ''} ${paragraph.styleName ?? ''}`;
+  const tocLevelMatch = styleSource.match(/toc\s*([1-9])/i);
+  if (tocLevelMatch) {
+    return Number.parseInt(tocLevelMatch[1], 10);
+  }
+
+  const text = paragraph.text.trim();
+  if (/^\d+\.\d+\.\d+\s+\S+/.test(text)) {
+    return 3;
+  }
+
+  if (/^\d+\.\d+\s+\S+/.test(text)) {
+    return 2;
+  }
+
+  return 1;
+};
+
+const getTocEntryRule = (
+  tocRule: ReturnType<typeof parseTocRule>,
+  paragraph: ParsedParagraph
+): { rule: ParagraphStyleRule; label: string } => {
+  const level = getTocEntryLevel(paragraph);
+  if (level >= 3) {
+    return { rule: tocRule.subsection, label: 'Second-level section table of contents entry' };
+  }
+
+  if (level === 2) {
+    return { rule: tocRule.section, label: 'First-level section table of contents entry' };
+  }
+
+  return { rule: tocRule.chapter, label: 'Chapter table of contents entry' };
+};
 
 const findTocHeadingParagraph = (documentModel: ParsedDocxModel): ParsedParagraph | undefined =>
   documentModel.paragraphs.find((paragraph) => matchesSectionLabel(paragraph.text, '目录'));
@@ -748,11 +977,11 @@ const checkParagraphStyle = (
     label: string;
   }
 ): void => {
-  if (rule.font && !fontMatches(rule.font, paragraph.fontFamily)) {
+  if (rule.font && findMismatchedFontFamily(rule.font, paragraph)) {
     addIssue(issues, {
       category: options.category,
       location: humanParagraphLocation(paragraph),
-      currentValue: paragraph.fontFamily ?? 'Unknown',
+      currentValue: formatParagraphFontFamilies(paragraph),
       expectedValue: rule.font,
       reason: `${options.label} font does not match the configured style.`,
       suggestion: `Adjust the ${options.label.toLowerCase()} font to match the rule.`,
@@ -772,7 +1001,19 @@ const checkParagraphStyle = (
     });
   }
 
-  if (rule.alignment && paragraph.alignment && paragraph.alignment !== rule.alignment) {
+  if (rule.bold !== undefined && paragraph.bold !== undefined && paragraph.bold !== rule.bold) {
+    addIssue(issues, {
+      category: options.category,
+      location: humanParagraphLocation(paragraph),
+      currentValue: paragraph.bold ? 'Bold' : 'Regular',
+      expectedValue: rule.bold ? 'Bold' : 'Regular',
+      reason: `${options.label} bold style does not match the configured style.`,
+      suggestion: `Adjust the ${options.label.toLowerCase()} bold style to match the rule.`,
+      severity: 'low',
+    });
+  }
+
+  if (rule.alignment && paragraph.alignment && normalizeAlignment(paragraph.alignment) !== normalizeAlignment(rule.alignment)) {
     addIssue(issues, {
       category: options.category,
       location: humanParagraphLocation(paragraph),
@@ -1000,36 +1241,19 @@ export const evaluateDocumentAgainstRules = (
       continue;
     }
 
-    if (requiredSection === '毕业论文原创性声明') {
-      const normalizedWindow = documentModel.paragraphs
-        .slice(Math.max(0, sectionParagraph.index - 1), Math.min(documentModel.paragraphs.length, sectionParagraph.index + 5))
-        .map((paragraph) => paragraph.text)
-        .join(' ');
-
-      if (!/签名|署名|日期/.test(normalizedWindow)) {
-        addIssue(issues, {
-          category: 'other',
-          location: humanParagraphLocation(sectionParagraph),
-          currentValue: normalizedWindow || sectionParagraph.text,
-          expectedValue: '包含签名与日期信息',
-          reason: 'The originality statement section does not appear to include signature or date prompts.',
-          suggestion: 'Add signature and date fields to the originality statement page.',
-          severity: 'low',
-        });
-      }
-    }
+    void sectionParagraph;
   }
 
   const bodyParagraphs = selectBodyParagraphs(documentModel);
   const expectedBodyFont = parseExpectedFont(ruleConfig.bodyFont);
   const firstMismatchedBody = bodyParagraphs.find((paragraph) =>
-    expectedBodyFont && paragraph.fontFamily && !fontMatches(expectedBodyFont, paragraph.fontFamily)
+    expectedBodyFont && findMismatchedFontFamily(expectedBodyFont, paragraph)
   );
   if (firstMismatchedBody && expectedBodyFont) {
     addIssue(issues, {
       category: 'body',
       location: humanParagraphLocation(firstMismatchedBody),
-      currentValue: firstMismatchedBody.fontFamily ?? 'Unknown',
+      currentValue: formatParagraphFontFamilies(firstMismatchedBody),
       expectedValue: expectedBodyFont,
       reason: 'The body font does not match the rule configuration.',
       suggestion: `Apply ${expectedBodyFont} to the body text.`,
@@ -1125,9 +1349,15 @@ export const evaluateDocumentAgainstRules = (
   }
 
   const headingRules = parseHeadingRules(ruleConfig.headingFormats);
+  const tocParagraphIndexes = new Set([
+    findTocHeadingParagraph(documentModel)?.index,
+    ...getTocEntryParagraphs(documentModel).map((item) => item.index),
+  ].filter((index): index is number => index !== undefined));
   for (const headingRule of headingRules) {
     const headingParagraph = documentModel.paragraphs.find((paragraph) =>
-      getEffectiveHeadingLevel(paragraph) === headingRule.level && paragraph.text
+      getEffectiveHeadingLevel(paragraph) === headingRule.level
+      && paragraph.text
+      && !tocParagraphIndexes.has(paragraph.index)
     );
     if (!headingParagraph) {
       addIssue(issues, {
@@ -1142,11 +1372,11 @@ export const evaluateDocumentAgainstRules = (
       continue;
     }
 
-    if (headingRule.font && !fontMatches(headingRule.font, headingParagraph.fontFamily)) {
+    if (headingRule.font && findMismatchedFontFamily(headingRule.font, headingParagraph)) {
       addIssue(issues, {
         category: 'heading',
         location: humanParagraphLocation(headingParagraph),
-        currentValue: headingParagraph.fontFamily ?? 'Unknown',
+        currentValue: formatParagraphFontFamilies(headingParagraph),
         expectedValue: headingRule.font,
         reason: 'Heading font does not match the configured style.',
         suggestion: 'Apply the correct heading font to this title.',
@@ -1436,9 +1666,10 @@ export const evaluateDocumentAgainstRules = (
     }
 
     for (const entry of tocEntries.slice(0, 5)) {
-      checkParagraphStyle(issues, entry, tocRule.body, {
+      const entryRule = getTocEntryRule(tocRule, entry);
+      checkParagraphStyle(issues, entry, entryRule.rule, {
         category: 'other',
-        label: 'Table of contents entry',
+        label: entryRule.label,
       });
     }
   }

@@ -5,6 +5,7 @@ declare global {
     interface Request {
       currentUser?: AuthUser;
       authToken?: string;
+      requestId?: string;
     }
   }
 }

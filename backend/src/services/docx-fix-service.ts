@@ -2,9 +2,16 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import JSZip from 'jszip';
 import { XMLBuilder, XMLParser } from 'fast-xml-parser';
-import type { PaperRuleConfig, ParsedDocxModel, ParsedParagraph } from '../types/index.js';
+import { fixOptionValues } from '../types/index.js';
+import type { FixExportLogger } from './fix-export-log-service.js';
+import type { FixOption, PaperRuleConfig, ParsedDocxModel, ParsedParagraph } from '../types/index.js';
 
 type XmlNode = Record<string, unknown>;
+interface DocumentRebuildStats {
+  preservedOriginalParagraphs: number;
+  rebuiltOriginalParagraphs: number;
+  insertedParagraphs: number;
+}
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -12,12 +19,26 @@ const xmlParser = new XMLParser({
   trimValues: false,
   processEntities: false,
 });
+const orderedXmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  trimValues: false,
+  processEntities: false,
+  preserveOrder: true,
+});
 
 const xmlBuilder = new XMLBuilder({
   ignoreAttributes: false,
   attributeNamePrefix: '',
   suppressEmptyNode: true,
   format: true,
+});
+const orderedXmlBuilder = new XMLBuilder({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  suppressEmptyNode: true,
+  preserveOrder: true,
+  format: false,
 });
 
 const wordMlNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -47,6 +68,18 @@ const getWordAttr = (node: XmlNode | undefined, name: string): string | undefine
 
   const direct = node[`w:${name}`];
   return typeof direct === 'string' ? direct : undefined;
+};
+
+const setPropertyFirst = (node: XmlNode, key: string, value: unknown): void => {
+  const entries = Object.entries(node).filter(([entryKey]) => entryKey !== key);
+  for (const entryKey of Object.keys(node)) {
+    delete node[entryKey];
+  }
+
+  node[key] = value;
+  for (const [entryKey, entryValue] of entries) {
+    node[entryKey] = entryValue;
+  }
 };
 
 const parseNumericSpec = (value: string): number | undefined => {
@@ -168,8 +201,8 @@ const parseSpacingRule = (value: string): { before?: number; after?: number } =>
   const normalized = value.replace(/[，；]/g, ',');
   const result: { before?: number; after?: number } = {};
 
-  const beforeMatch = normalized.match(/(before|段前)\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
-  const afterMatch = normalized.match(/(after|段后)\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
+  const beforeMatch = normalized.match(/(before|段前)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
+  const afterMatch = normalized.match(/(after|段后)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(pt|磅)?/i);
 
   if (beforeMatch) {
     result.before = Number.parseFloat(beforeMatch[2]);
@@ -198,18 +231,22 @@ const parseFirstLineIndentRule = (value: string): number | undefined => {
 type ParagraphStyleRule = {
   font?: string;
   fontSizePt?: number;
-  alignment?: 'left' | 'center' | 'right';
+  bold?: boolean;
+  alignment?: 'left' | 'center' | 'right' | 'both' | 'justify' | 'distribute';
   lineHeight?: { mode: 'multiple' | 'points'; value: number };
   spacing?: { before?: number; after?: number };
   firstLineIndent?: number;
 };
+
+type ParagraphAlignment = NonNullable<ParagraphStyleRule['alignment']>;
 
 const parseParagraphStyleRule = (value: string, preferredKeywords: string[] = []): ParagraphStyleRule => {
   const segment = preferredKeywords.length > 0 ? selectRuleSegment(value, preferredKeywords) : value;
   const detailSegments = segment.split('|').map((item) => item.trim());
   const fontSegment = detailSegments.find((item) => /字体/i.test(item)) ?? segment;
   const sizeSegment = detailSegments.find((item) => /字号/i.test(item)) ?? segment;
-  const alignmentSegment = detailSegments.find((item) => /对齐|居中|居左|居右|left|center|right/i.test(item)) ?? segment;
+  const boldSegment = detailSegments.find((item) => /字形|加粗|bold|常规|normal/i.test(item)) ?? segment;
+  const alignmentSegment = detailSegments.find((item) => /对齐|居中|居左|居右|left|center|right|justify|both/i.test(item)) ?? segment;
   const lineHeightSegment = detailSegments.find((item) => /行距|line/i.test(item)) ?? segment;
   const spacingSegment = detailSegments.find((item) => /段前|段后|before|after/i.test(item)) ?? segment;
   const indentSegment = detailSegments.find((item) => /首行缩进|字符|indent/i.test(item)) ?? segment;
@@ -218,6 +255,7 @@ const parseParagraphStyleRule = (value: string, preferredKeywords: string[] = []
     font: ['宋体', '黑体', '楷体', '仿宋', 'Times New Roman']
       .find((alias) => fontSegment.toLowerCase().includes(alias.toLowerCase())),
     fontSizePt: parseFontSizePt(sizeSegment),
+    bold: /加粗|bold/i.test(boldSegment) ? true : /常规|normal/i.test(boldSegment) ? false : undefined,
     alignment: parseAlignment(alignmentSegment),
     lineHeight: parseLineHeightRule(lineHeightSegment),
     spacing: parseSpacingRule(spacingSegment),
@@ -278,8 +316,12 @@ const firstLineCharsValue = (value: number): string => `${Math.round(value * 100
 const lineValueFromRule = (rule: { mode: 'multiple' | 'points'; value: number }): string =>
   rule.mode === 'points' ? twipsFromPt(rule.value) : `${Math.round(rule.value * 240)}`;
 
-const parseAlignment = (value: string): 'left' | 'center' | 'right' | undefined => {
+const parseAlignment = (value: string): ParagraphAlignment | undefined => {
   const normalized = value.toLowerCase();
+  if (normalized.includes('justify') || normalized.includes('both') || normalized.includes('两端对齐')) {
+    return 'both';
+  }
+
   if (normalized.includes('center') || normalized.includes('居中')) {
     return 'center';
   }
@@ -297,8 +339,72 @@ const parseAlignment = (value: string): 'left' | 'center' | 'right' | undefined 
 
 const xmlHeader = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
 const xmlDeclarationPattern = /^(?:\s*<\?xml[^?]*\?>\s*)+/i;
+const defaultFixOptions = [...fixOptionValues];
+
+const emitFixLog = async (
+  logger: FixExportLogger | undefined,
+  event: string,
+  details?: Record<string, unknown>
+): Promise<void> => {
+  if (!logger) {
+    return;
+  }
+
+  await logger(event, details);
+};
+
+const getDocumentBodyTagSummary = (documentXml: string): Record<string, number> => {
+  const summary: Record<string, number> = {};
+
+  try {
+    const orderedRoot = orderedXmlParser.parse(documentXml) as XmlNode[];
+    const orderedDocumentEntry = getOrderedDocumentEntry(orderedRoot);
+    const orderedBodyEntry = getOrderedBodyEntry(orderedDocumentEntry);
+    const bodyChildren = Array.isArray(orderedBodyEntry?.['w:body'])
+      ? orderedBodyEntry['w:body'] as XmlNode[]
+      : [];
+
+    for (const child of bodyChildren) {
+      const tagName = Object.keys(child).find((key) => key !== ':@') ?? 'unknown';
+      summary[tagName] = (summary[tagName] ?? 0) + 1;
+    }
+  } catch (error) {
+    summary.parseError = 1;
+  }
+
+  return summary;
+};
+
+const inspectDocumentXml = (documentXml: string): Record<string, unknown> => {
+  const wordTextAttributeCount = documentXml.match(/\sw:t=/g)?.length ?? 0;
+  const invalidEmptyAttributeSamples = documentXml
+    .match(/\s(?:w|a|pic|m):[A-Za-z0-9]+=""/g)
+    ?.slice(0, 20) ?? [];
+
+  return {
+    bytes: Buffer.byteLength(documentXml, 'utf8'),
+    wordTextAttributeCount,
+    invalidEmptyAttributeCount: documentXml.match(/\s(?:w|a|pic|m):[A-Za-z0-9]+=""/g)?.length ?? 0,
+    invalidEmptyAttributeSamples,
+    bodyTagSummary: getDocumentBodyTagSummary(documentXml),
+  };
+};
+
+const inspectParagraphNodes = (paragraphNodes: XmlNode[]): Record<string, unknown> => ({
+  topLevelParagraphCount: paragraphNodes.length,
+  nonEmptyParagraphCount: paragraphNodes.filter((paragraphNode) => getParagraphText(paragraphNode).length > 0).length,
+  firstParagraphs: paragraphNodes.slice(0, 8).map((paragraphNode, index) => ({
+    index: index + 1,
+    text: getParagraphText(paragraphNode).slice(0, 80),
+  })),
+  lastParagraphs: paragraphNodes.slice(-8).map((paragraphNode, offset) => ({
+    index: paragraphNodes.length - Math.min(8, paragraphNodes.length) + offset + 1,
+    text: getParagraphText(paragraphNode).slice(0, 80),
+  })),
+});
 
 const buildXml = (root: XmlNode): string => {
+  normalizeTextElementNodes(root);
   const built = xmlBuilder.build(root).replace(xmlDeclarationPattern, '');
   return `${xmlHeader}${built}`;
 };
@@ -319,11 +425,226 @@ const normalizeZipXmlDeclarations = async (zip: JSZip): Promise<void> => {
   }
 };
 
+const formatTimestampForFilename = (date: Date): string => {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join('');
+};
+
+const wordTextElementNames = new Set(['w:t', 'w:instrText', 'w:delText']);
+const wordEmptyElementNames = new Set([
+  'w:adjustRightInd',
+  'w:autoSpaceDE',
+  'w:autoSpaceDN',
+  'w:allowSpaceOfSameStyleInTable',
+  'w:autofitToFirstFixedWidthCell',
+  'w:autoHyphenation',
+  'w:b',
+  'w:bCs',
+  'w:bidi',
+  'w:bordersDoNotSurroundFooter',
+  'w:bordersDoNotSurroundHeader',
+  'w:br',
+  'w:cachedColBalance',
+  'w:caps',
+  'w:cr',
+  'w:displayHangulFixedWidth',
+  'w:doNotAutofitConstrainedTables',
+  'w:doNotBreakConstrainedForcedTable',
+  'w:doNotIncludeSubdocsInStats',
+  'w:doNotSuppressIndentation',
+  'w:doNotTrackMoves',
+  'w:doNotUseIndentAsNumberingTabStop',
+  'w:doNotVertAlignCellWithSp',
+  'w:doNotVertAlignInTxbx',
+  'w:dstrike',
+  'w:evenAndOddHeaders',
+  'w:i',
+  'w:iCs',
+  'w:keepLines',
+  'w:keepNext',
+  'w:kinsoku',
+  'w:lastRenderedPageBreak',
+  'w:noBreakHyphen',
+  'w:noProof',
+  'w:outline',
+  'w:overflowPunct',
+  'w:pageBreakBefore',
+  'w:shadow',
+  'w:smallCaps',
+  'w:snapToGrid',
+  'w:softHyphen',
+  'w:splitPgBreakAndParaMark',
+  'w:strike',
+  'w:suppressAutoHyphens',
+  'w:suppressLineNumbers',
+  'w:tab',
+  'w:titlePg',
+  'w:topLinePunct',
+  'w:useAltKinsokuLineBreakRules',
+  'w:useAnsiKerningPairs',
+  'w:useFELayout',
+  'w:useNormalStyleForList',
+  'w:vanish',
+  'w:webHidden',
+  'w:widowControl',
+  'w:wordWrap',
+  'a:avLst',
+  'a:fillRect',
+  'a:noFill',
+  'a:srcRect',
+  'm:dispDef',
+  'pic:cNvPicPr',
+]);
+const isTextElementPrimitive = (value: unknown): value is string | number | boolean =>
+  typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+
+const paragraphPropertiesOrder = [
+  'w:pStyle',
+  'w:keepNext',
+  'w:keepLines',
+  'w:pageBreakBefore',
+  'w:framePr',
+  'w:widowControl',
+  'w:numPr',
+  'w:suppressLineNumbers',
+  'w:pBdr',
+  'w:shd',
+  'w:tabs',
+  'w:suppressAutoHyphens',
+  'w:kinsoku',
+  'w:wordWrap',
+  'w:overflowPunct',
+  'w:topLinePunct',
+  'w:autoSpaceDE',
+  'w:autoSpaceDN',
+  'w:bidi',
+  'w:adjustRightInd',
+  'w:snapToGrid',
+  'w:spacing',
+  'w:ind',
+  'w:contextualSpacing',
+  'w:mirrorIndents',
+  'w:suppressOverlap',
+  'w:jc',
+  'w:textDirection',
+  'w:textAlignment',
+  'w:textboxTightWrap',
+  'w:outlineLvl',
+  'w:divId',
+  'w:cnfStyle',
+  'w:rPr',
+  'w:sectPr',
+  'w:pPrChange',
+];
+
+const runPropertiesOrder = [
+  'w:rStyle',
+  'w:rFonts',
+  'w:b',
+  'w:bCs',
+  'w:i',
+  'w:iCs',
+  'w:caps',
+  'w:smallCaps',
+  'w:strike',
+  'w:dstrike',
+  'w:outline',
+  'w:shadow',
+  'w:emboss',
+  'w:imprint',
+  'w:noProof',
+  'w:snapToGrid',
+  'w:vanish',
+  'w:webHidden',
+  'w:color',
+  'w:spacing',
+  'w:w',
+  'w:kern',
+  'w:position',
+  'w:sz',
+  'w:szCs',
+  'w:highlight',
+  'w:u',
+  'w:effect',
+  'w:bdr',
+  'w:shd',
+  'w:fitText',
+  'w:vertAlign',
+  'w:rtl',
+  'w:cs',
+  'w:em',
+  'w:lang',
+  'w:eastAsianLayout',
+  'w:specVanish',
+  'w:oMath',
+  'w:rPrChange',
+];
+
+const reorderNodeProperties = (node: XmlNode, preferredOrder: string[]): void => {
+  const entries = Object.entries(node);
+  const orderedKeys = new Set(preferredOrder);
+  const orderedEntries = preferredOrder
+    .filter((key) => Object.prototype.hasOwnProperty.call(node, key))
+    .map((key) => [key, node[key]] as [string, unknown]);
+  const remainingEntries = entries.filter(([key]) => !orderedKeys.has(key));
+
+  for (const key of Object.keys(node)) {
+    delete node[key];
+  }
+
+  for (const [key, child] of [...orderedEntries, ...remainingEntries]) {
+    node[key] = child;
+  }
+};
+
+const normalizeTextElementNodes = (value: unknown, nodeName?: string): void => {
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((child) => normalizeTextElementNodes(child, nodeName));
+    return;
+  }
+
+  const node = value as XmlNode;
+  for (const [key, child] of Object.entries(node)) {
+    if (wordTextElementNames.has(key) && isTextElementPrimitive(child)) {
+      node[key] = { '#text': String(child) };
+      continue;
+    }
+
+    if (wordEmptyElementNames.has(key) && child === '') {
+      node[key] = {};
+      continue;
+    }
+
+    normalizeTextElementNodes(child, key);
+  }
+
+  if (nodeName === 'w:pPr') {
+    reorderNodeProperties(node, paragraphPropertiesOrder);
+  } else if (nodeName === 'w:rPr') {
+    reorderNodeProperties(node, runPropertiesOrder);
+  } else if (nodeName === 'w:p') {
+    reorderNodeProperties(node, ['w:pPr']);
+  } else if (nodeName === 'w:r') {
+    reorderNodeProperties(node, ['w:rPr']);
+  }
+};
+
 const createParagraphNode = (text: string, options?: {
   fontFamily?: string;
   fontSizePt?: number;
   styleId?: string;
-  alignment?: 'left' | 'center' | 'right';
+  alignment?: ParagraphAlignment;
   lineHeight?: { mode: 'multiple' | 'points'; value: number };
   spacing?: { before?: number; after?: number };
   firstLineChars?: number;
@@ -399,6 +720,125 @@ const setBodyParagraphNodes = (documentRoot: XmlNode, paragraphs: XmlNode[]): vo
   }
 };
 
+const getDocumentBodyNode = (documentRoot: XmlNode): XmlNode | undefined =>
+  toXmlObject(toXmlObject(documentRoot['w:document'])?.['w:body']);
+
+const getOrderedDocumentEntry = (orderedRoot: XmlNode[]): XmlNode | undefined =>
+  orderedRoot.find((node) => Object.prototype.hasOwnProperty.call(node, 'w:document'));
+
+const getOrderedBodyEntry = (orderedDocumentEntry: XmlNode | undefined): XmlNode | undefined =>
+  (Array.isArray(orderedDocumentEntry?.['w:document']) ? orderedDocumentEntry?.['w:document'] : [])
+    .map((node) => toXmlObject(node))
+    .find((node) => Object.prototype.hasOwnProperty.call(node, 'w:body'));
+
+const ensureOrderedDocumentNamespace = (orderedDocumentEntry: XmlNode | undefined): void => {
+  if (!orderedDocumentEntry) {
+    return;
+  }
+
+  const attributes = toXmlObject(orderedDocumentEntry[':@']) ?? {};
+  attributes['xmlns:r'] = relNs;
+  orderedDocumentEntry[':@'] = attributes;
+};
+
+const objectNodeToOrderedEntry = (tagName: string, node: XmlNode): XmlNode => {
+  const root = { [tagName]: node };
+  normalizeTextElementNodes(root);
+  const built = xmlBuilder.build(root);
+  const parsed = orderedXmlParser.parse(built) as XmlNode[];
+  const entry = parsed.find((item) => Object.prototype.hasOwnProperty.call(item, tagName));
+  if (!entry) {
+    throw new Error(`Failed to rebuild ${tagName} as ordered XML.`);
+  }
+
+  return entry;
+};
+
+const buildOrderedDocumentXml = (
+  originalDocumentXml: string,
+  documentRoot: XmlNode,
+  originalParagraphNodes: XmlNode[],
+  repairedParagraphNodes: XmlNode[],
+  originalParagraphSnapshots: WeakMap<XmlNode, string>,
+  rebuildStats?: DocumentRebuildStats
+): string => {
+  const orderedRoot = orderedXmlParser.parse(originalDocumentXml) as XmlNode[];
+  const orderedDocumentEntry = getOrderedDocumentEntry(orderedRoot);
+  const orderedBodyEntry = getOrderedBodyEntry(orderedDocumentEntry);
+  const bodyChildren = Array.isArray(orderedBodyEntry?.['w:body'])
+    ? orderedBodyEntry?.['w:body'] as XmlNode[]
+    : undefined;
+
+  if (!orderedBodyEntry || !bodyChildren) {
+    return buildXml(documentRoot);
+  }
+
+  ensureOrderedDocumentNamespace(orderedDocumentEntry);
+
+  const originalParagraphIndex = new WeakMap<XmlNode, number>();
+  originalParagraphNodes.forEach((paragraphNode, index) => {
+    originalParagraphIndex.set(paragraphNode, index);
+  });
+
+  const paragraphChildIndexes: number[] = [];
+  bodyChildren.forEach((child, index) => {
+    if (Object.prototype.hasOwnProperty.call(child, 'w:p')) {
+      paragraphChildIndexes.push(index);
+    }
+  });
+
+  const repairedBodyChildren: XmlNode[] = [];
+  let nextOriginalChildIndex = 0;
+
+  const appendOriginalChildrenUntil = (targetChildIndex: number): void => {
+    while (nextOriginalChildIndex < targetChildIndex) {
+      const child = bodyChildren[nextOriginalChildIndex];
+      if (!Object.prototype.hasOwnProperty.call(child, 'w:sectPr')) {
+        repairedBodyChildren.push(child);
+      }
+      nextOriginalChildIndex += 1;
+    }
+  };
+
+  for (const paragraphNode of repairedParagraphNodes) {
+    const originalIndex = originalParagraphIndex.get(paragraphNode);
+    if (originalIndex !== undefined) {
+      const childIndex = paragraphChildIndexes[originalIndex];
+      if (childIndex !== undefined) {
+        appendOriginalChildrenUntil(childIndex);
+        nextOriginalChildIndex = Math.max(nextOriginalChildIndex, childIndex + 1);
+        if (originalParagraphSnapshots.get(paragraphNode) === JSON.stringify(paragraphNode)) {
+          repairedBodyChildren.push(bodyChildren[childIndex]);
+          if (rebuildStats) {
+            rebuildStats.preservedOriginalParagraphs += 1;
+          }
+          continue;
+        }
+      }
+    }
+
+    if (rebuildStats) {
+      if (originalIndex === undefined) {
+        rebuildStats.insertedParagraphs += 1;
+      } else {
+        rebuildStats.rebuiltOriginalParagraphs += 1;
+      }
+    }
+    repairedBodyChildren.push(objectNodeToOrderedEntry('w:p', paragraphNode));
+  }
+
+  appendOriginalChildrenUntil(bodyChildren.length);
+
+  const sectionProperties = toXmlObject(getDocumentBodyNode(documentRoot)?.['w:sectPr']);
+  if (sectionProperties) {
+    repairedBodyChildren.push(objectNodeToOrderedEntry('w:sectPr', sectionProperties));
+  }
+
+  orderedBodyEntry['w:body'] = repairedBodyChildren;
+  const built = orderedXmlBuilder.build(orderedRoot).replace(xmlDeclarationPattern, '');
+  return `${xmlHeader}${built}`;
+};
+
 const ensureParagraphProperties = (paragraphNode: XmlNode): XmlNode => {
   const existing = toXmlObject(paragraphNode['w:pPr']);
   if (existing) {
@@ -406,7 +846,7 @@ const ensureParagraphProperties = (paragraphNode: XmlNode): XmlNode => {
   }
 
   const created: XmlNode = {};
-  paragraphNode['w:pPr'] = created;
+  setPropertyFirst(paragraphNode, 'w:pPr', created);
   return created;
 };
 
@@ -431,14 +871,15 @@ const ensureRunProperties = (runNode: XmlNode): XmlNode => {
   }
 
   const created: XmlNode = {};
-  runNode['w:rPr'] = created;
+  setPropertyFirst(runNode, 'w:rPr', created);
   return created;
 };
 
 const replaceParagraphText = (paragraphNode: XmlNode, text: string, options?: {
   fontFamily?: string;
   fontSizePt?: number;
-  alignment?: 'left' | 'center' | 'right';
+  bold?: boolean;
+  alignment?: ParagraphAlignment;
   lineHeight?: { mode: 'multiple' | 'points'; value: number };
   spacing?: { before?: number; after?: number };
   firstLineChars?: number;
@@ -446,14 +887,14 @@ const replaceParagraphText = (paragraphNode: XmlNode, text: string, options?: {
   const newParagraph = createParagraphNode(text, options);
   paragraphNode['w:r'] = newParagraph['w:r'];
   if (newParagraph['w:pPr']) {
-    paragraphNode['w:pPr'] = {
+    setPropertyFirst(paragraphNode, 'w:pPr', {
       ...(toXmlObject(paragraphNode['w:pPr']) ?? {}),
       ...(toXmlObject(newParagraph['w:pPr']) ?? {}),
-    };
+    });
   }
 };
 
-const applyRunFont = (runNode: XmlNode, fontFamily?: string, fontSizePt?: number): void => {
+const applyRunFont = (runNode: XmlNode, fontFamily?: string, fontSizePt?: number, bold?: boolean): void => {
   const runProperties = ensureRunProperties(runNode);
   if (fontFamily) {
     runProperties['w:rFonts'] = {
@@ -468,6 +909,11 @@ const applyRunFont = (runNode: XmlNode, fontFamily?: string, fontSizePt?: number
     runProperties['w:sz'] = { 'w:val': value };
     runProperties['w:szCs'] = { 'w:val': value };
   }
+
+  if (bold !== undefined) {
+    runProperties['w:b'] = bold ? {} : { 'w:val': '0' };
+    runProperties['w:bCs'] = bold ? {} : { 'w:val': '0' };
+  }
 };
 
 const applyParagraphFormatting = (
@@ -475,15 +921,16 @@ const applyParagraphFormatting = (
   options: {
     fontFamily?: string;
     fontSizePt?: number;
+    bold?: boolean;
     lineHeight?: { mode: 'multiple' | 'points'; value: number };
     spacing?: { before?: number; after?: number };
     firstLineChars?: number;
-    alignment?: 'left' | 'center' | 'right';
+    alignment?: ParagraphAlignment;
   }
 ): void => {
   const runs = getOrCreateDirectRuns(paragraphNode);
   for (const run of runs) {
-    applyRunFont(run, options.fontFamily, options.fontSizePt);
+    applyRunFont(run, options.fontFamily, options.fontSizePt, options.bold);
   }
 
   const paragraphProperties = ensureParagraphProperties(paragraphNode);
@@ -677,7 +1124,7 @@ const ensureFooterPart = async (
   relsRoot: XmlNode,
   contentTypesRoot: XmlNode,
   index: number,
-  alignment: 'left' | 'center' | 'right'
+  alignment: ParagraphAlignment
 ): Promise<string> => {
   const target = `footer${index}.xml`;
   const relId = ensureRelationship(relsRoot, target, 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer');
@@ -767,7 +1214,7 @@ const getHeadingRuleMap = (
 ): Map<number, {
   font?: string;
   fontSizePt?: number;
-  alignment?: 'left' | 'center' | 'right';
+  alignment?: ParagraphAlignment;
   lineHeight?: { mode: 'multiple' | 'points'; value: number };
   spacing?: { before?: number; after?: number };
   firstLineIndent?: number;
@@ -788,15 +1235,10 @@ const getHeadingRuleMap = (
 
 const getAbstractTitleRule = (
   ruleConfig: PaperRuleConfig
-): { font?: string; fontSizePt?: number; alignment?: 'left' | 'center' | 'right' } => {
+): ParagraphStyleRule => {
   const segments = parseConfiguredTokens(ruleConfig.abstractFormat);
   const titleSegment = segments.find((segment) => segment.includes('标题')) ?? segments[0] ?? ruleConfig.abstractFormat;
-  return {
-    font: ['宋体', '黑体', '楷体', '仿宋', 'Times New Roman']
-      .find((alias) => titleSegment.toLowerCase().includes(alias.toLowerCase())),
-    fontSizePt: parseFontSizePt(titleSegment),
-    alignment: parseAlignment(titleSegment),
-  };
+  return parseParagraphStyleRule(titleSegment);
 };
 
 const getCaptionRule = (value: string | undefined, prefix: '图' | '表'): ParagraphStyleRule & { position?: 'above' | 'below' } => {
@@ -807,12 +1249,57 @@ const getCaptionRule = (value: string | undefined, prefix: '图' | '表'): Parag
   };
 };
 
-const getTocRule = (value: string | undefined): { title: ParagraphStyleRule; body: ParagraphStyleRule } => {
+const getTocRule = (value: string | undefined): {
+  title: ParagraphStyleRule;
+  chapter: ParagraphStyleRule;
+  section: ParagraphStyleRule;
+  subsection: ParagraphStyleRule;
+} => {
   const resolved = value ?? '';
-  return {
-    title: parseParagraphStyleRule(resolved, ['目录标题', '标题']),
-    body: parseParagraphStyleRule(resolved, ['目录正文', '正文']),
+  const segments = parseConfiguredTokens(resolved);
+  const parseSegment = (keywords: string[]): ParagraphStyleRule | undefined => {
+    const segment = segments.find((item) => keywords.some((keyword) => item.includes(keyword)));
+    return segment ? parseParagraphStyleRule(segment) : undefined;
   };
+  const legacyBody = parseSegment(['目录正文', '正文']) ?? {};
+  const plainTitleSegment = segments.find((item) => /^标题(?:\||[:：=]|$)/.test(item));
+  return {
+    title: parseSegment(['目录标题']) ?? (plainTitleSegment ? parseParagraphStyleRule(plainTitleSegment) : {}),
+    chapter: {
+      ...legacyBody,
+      ...(parseSegment(['各章目录', '章目录']) ?? {}),
+    },
+    section: {
+      ...legacyBody,
+      ...(parseSegment(['一级节标题目录']) ?? {}),
+    },
+    subsection: {
+      ...legacyBody,
+      ...(parseSegment(['二级节标题目录']) ?? {}),
+    },
+  };
+};
+
+const getTocEntryLevelFromText = (text: string): number => {
+  const resolved = text.trim();
+  if (/^\d+\.\d+\.\d+\s+\S+/.test(resolved)) {
+    return 3;
+  }
+
+  if (/^\d+\.\d+\s+\S+/.test(resolved)) {
+    return 2;
+  }
+
+  return 1;
+};
+
+const getTocEntryRule = (tocRule: ReturnType<typeof getTocRule>, text: string): ParagraphStyleRule => {
+  const level = getTocEntryLevelFromText(text);
+  if (level >= 3) {
+    return tocRule.subsection;
+  }
+
+  return level === 2 ? tocRule.section : tocRule.chapter;
 };
 
 const applyParagraphStyleRule = (paragraphNode: XmlNode, rule: ParagraphStyleRule): void => {
@@ -857,97 +1344,6 @@ const updateSectionPageLayout = (documentRoot: XmlNode, ruleConfig: PaperRuleCon
   sectPr['w:pgMar'] = marginNode;
 };
 
-const addMissingCoverFields = (paragraphNodes: XmlNode[], ruleConfig: PaperRuleConfig): XmlNode[] => {
-  const missingNodes = parseConfiguredTokens(ruleConfig.coverItems)
-    .filter((token) => !paragraphNodes.some((paragraphNode) => matchesToken(getParagraphText(paragraphNode), token)))
-    .map((token) => createParagraphNode(token === '完成时间'
-      ? `完成时间：待补充（示例：${formatChineseYearMonth(new Date())}）`
-      : `${token}：待补充`, { fontFamily: '宋体', fontSizePt: 12 }));
-
-  return missingNodes.length > 0 ? [...missingNodes, ...paragraphNodes] : paragraphNodes;
-};
-
-const ensureSection = (paragraphNodes: XmlNode[], title: string, bodyLines: string[]): XmlNode[] => {
-  if (paragraphNodes.some((paragraphNode) => normalizeText(getParagraphText(paragraphNode)) === normalizeText(title))) {
-    return paragraphNodes;
-  }
-
-  return [
-    ...paragraphNodes,
-    createParagraphNode(title, { fontFamily: '黑体', fontSizePt: 18, styleId: 'Heading1', alignment: 'center' }),
-    ...bodyLines.map((line) => createParagraphNode(line, { fontFamily: '宋体', fontSizePt: 12 })),
-  ];
-};
-
-const toChineseDigit = (digit: string): string => ({
-  '0': '〇',
-  '1': '一',
-  '2': '二',
-  '3': '三',
-  '4': '四',
-  '5': '五',
-  '6': '六',
-  '7': '七',
-  '8': '八',
-  '9': '九',
-}[digit] ?? digit);
-
-const formatChineseMonth = (month: number): string => {
-  if (month <= 10) {
-    return month === 10 ? '十' : toChineseDigit(String(month));
-  }
-
-  if (month < 20) {
-    return `十${toChineseDigit(String(month % 10))}`;
-  }
-
-  return `${toChineseDigit(String(Math.floor(month / 10)))}十${month % 10 === 0 ? '' : toChineseDigit(String(month % 10))}`;
-};
-
-const formatChineseYearMonth = (date: Date): string => {
-  const year = String(date.getFullYear()).split('').map((digit) => toChineseDigit(digit)).join('');
-  const month = formatChineseMonth(date.getMonth() + 1);
-  return `${year}年${month}月`;
-};
-
-const sectionPlaceholderBodies: Record<string, string[]> = {
-  毕业论文原创性声明: [
-    '本人郑重声明：本论文为本人在指导教师指导下独立完成。',
-    '作者手写电子签名：待补充    日期：待补充',
-  ],
-  致谢: [
-    '请在此补充致谢内容。',
-  ],
-  参考文献: [
-    '[1] 待补充参考文献',
-  ],
-  图清单: [
-    '图1.1 待补充图题注........................1',
-  ],
-  表清单: [
-    '表1.1 待补充表题注........................1',
-  ],
-  指导教师指导意见表: [
-    '指导教师指导意见：待补充',
-    '指导教师签名：待补充    日期：待补充',
-  ],
-  评阅教师评阅意见表: [
-    '评阅教师评阅意见：待补充',
-    '评阅教师签名：待补充    日期：待补充',
-  ],
-};
-
-const ensureConfiguredSections = (paragraphNodes: XmlNode[], ruleConfig: PaperRuleConfig): XmlNode[] => {
-  let nextParagraphNodes = paragraphNodes;
-
-  for (const token of parseConfiguredTokens(ruleConfig.requiredSections)) {
-    const bodyLines = sectionPlaceholderBodies[token] ?? [`请在此补充${token}内容。`];
-    nextParagraphNodes = ensureSection(nextParagraphNodes, token, bodyLines);
-  }
-
-  return nextParagraphNodes;
-};
-
 const normalizeKeywordsLine = (text: string): string => {
   const content = text.replace(/^(关键词|keywords?)[:：]?\s*/i, '').trim();
   const tokens = content
@@ -955,11 +1351,11 @@ const normalizeKeywordsLine = (text: string): string => {
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const normalizedTokens = tokens.length > 0 ? [...tokens] : ['待补充关键词1', '待补充关键词2', '待补充关键词3'];
-  while (normalizedTokens.length < 3) {
-    normalizedTokens.push(`待补充关键词${normalizedTokens.length + 1}`);
+  if (tokens.length === 0) {
+    return text.trim();
   }
-  return `关键词：${normalizedTokens.join('；')}`;
+
+  return `关键词：${tokens.join('；')}`;
 };
 
 const looksLikeTocEntry = (text: string): boolean => {
@@ -973,20 +1369,15 @@ const looksLikeTocEntry = (text: string): boolean => {
     || /^第[一二三四五六七八九十百]+[章节部分篇]\s+\S+.+\d+$/.test(resolved);
 };
 
-const buildPlaceholderAbstractBody = (): string => {
-  const base = '本摘要为系统自动补齐的占位内容，请根据论文研究目的、方法、结果与结论进一步完善。';
-  let text = base;
-  while (text.replace(/\s+/g, '').length < 320) {
-    text += base;
-  }
-
-  return text;
-};
-
 const ensureAbstractAndKeywords = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxModel, ruleConfig: PaperRuleConfig): XmlNode[] => {
   const nextParagraphs = [...paragraphNodes];
-  const abstractIndex = parsedDocument.paragraphs.findIndex((paragraph) => matchesToken(paragraph.text, '摘要') || matchesToken(paragraph.text, 'abstract'));
-  const keywordIndex = parsedDocument.paragraphs.findIndex((paragraph) => /(关\s*键\s*词|keywords?)/i.test(paragraph.text));
+  const alignedParsedParagraphs = alignParsedParagraphsToNodes(nextParagraphs, parsedDocument);
+  const abstractIndex = alignedParsedParagraphs.findIndex((paragraph) =>
+    paragraph && (matchesToken(paragraph.text, '摘要') || matchesToken(paragraph.text, 'abstract'))
+  );
+  const keywordIndex = alignedParsedParagraphs.findIndex((paragraph) =>
+    paragraph && /(关\s*键\s*词|keywords?)/i.test(paragraph.text)
+  );
   const bodyFont = hasNoRequirement(ruleConfig.bodyFont) ? undefined : ruleConfig.bodyFont;
   const bodyFontSize = parseFontSizePt(ruleConfig.bodyFontSize);
   const bodyLineHeight = parseLineHeightRule(ruleConfig.lineHeight);
@@ -994,53 +1385,35 @@ const ensureAbstractAndKeywords = (paragraphNodes: XmlNode[], parsedDocument: Pa
   const abstractTitleRule = getAbstractTitleRule(ruleConfig);
 
   if (abstractIndex < 0) {
-    nextParagraphs.push(createParagraphNode('摘要', {
-      fontFamily: abstractTitleRule.font ?? '黑体',
-      fontSizePt: abstractTitleRule.fontSizePt ?? 18,
-      styleId: 'Heading1',
-      alignment: abstractTitleRule.alignment ?? 'center',
-    }));
-    nextParagraphs.push(createParagraphNode(buildPlaceholderAbstractBody(), {
-      fontFamily: bodyFont,
-      fontSizePt: bodyFontSize,
-      lineHeight: bodyLineHeight,
-      spacing: bodySpacing,
-    }));
-    nextParagraphs.push(createParagraphNode('关键词：待补充关键词1；待补充关键词2；待补充关键词3', {
-      fontFamily: bodyFont,
-      fontSizePt: bodyFontSize,
-      lineHeight: bodyLineHeight,
-      spacing: bodySpacing,
-    }));
     return nextParagraphs;
   }
+
+  applyParagraphFormatting(nextParagraphs[abstractIndex], {
+    fontFamily: abstractTitleRule.font ?? '黑体',
+    fontSizePt: abstractTitleRule.fontSizePt ?? 18,
+    bold: abstractTitleRule.bold,
+    alignment: abstractTitleRule.alignment ?? 'center',
+    lineHeight: abstractTitleRule.lineHeight,
+    spacing: abstractTitleRule.spacing,
+    firstLineChars: abstractTitleRule.firstLineIndent,
+  });
 
   const abstractBodyStart = abstractIndex + 1;
   const abstractBodyEnd = keywordIndex > abstractIndex ? keywordIndex : parsedDocument.paragraphs.length;
   const abstractBodyIndexes = Array.from({ length: Math.max(abstractBodyEnd - abstractBodyStart, 0) }, (_, offset) => abstractBodyStart + offset);
-  const currentLength = abstractBodyIndexes
-    .map((index) => getParagraphText(nextParagraphs[index] ?? {}))
-    .join('')
-    .replace(/\s+/g, '')
-    .length;
+  for (const bodyIndex of abstractBodyIndexes) {
+    if (!nextParagraphs[bodyIndex]) {
+      continue;
+    }
 
-  if (abstractBodyIndexes.length > 0 && currentLength < 300) {
-    replaceParagraphText(nextParagraphs[abstractBodyIndexes[0]], buildPlaceholderAbstractBody(), {
+    applyParagraphFormatting(nextParagraphs[bodyIndex], {
       fontFamily: bodyFont,
       fontSizePt: bodyFontSize,
       lineHeight: bodyLineHeight,
       spacing: bodySpacing,
     });
-  } else if (abstractBodyIndexes.length === 0) {
-    nextParagraphs.splice(abstractIndex + 1, 0, createParagraphNode(buildPlaceholderAbstractBody(), {
-      fontFamily: bodyFont,
-      fontSizePt: bodyFontSize,
-      lineHeight: bodyLineHeight,
-      spacing: bodySpacing,
-    }));
   }
 
-  const resolvedKeywordIndex = keywordIndex >= 0 ? keywordIndex : abstractIndex + 2;
   if (keywordIndex >= 0 && nextParagraphs[keywordIndex]) {
     replaceParagraphText(nextParagraphs[keywordIndex], normalizeKeywordsLine(getParagraphText(nextParagraphs[keywordIndex])), {
       fontFamily: bodyFont,
@@ -1048,13 +1421,6 @@ const ensureAbstractAndKeywords = (paragraphNodes: XmlNode[], parsedDocument: Pa
       lineHeight: bodyLineHeight,
       spacing: bodySpacing,
     });
-  } else {
-    nextParagraphs.splice(Math.min(resolvedKeywordIndex, nextParagraphs.length), 0, createParagraphNode('关键词：待补充关键词1；待补充关键词2；待补充关键词3', {
-      fontFamily: bodyFont,
-      fontSizePt: bodyFontSize,
-      lineHeight: bodyLineHeight,
-      spacing: bodySpacing,
-    }));
   }
 
   return nextParagraphs;
@@ -1081,25 +1447,20 @@ const ensureTableOfContents = (paragraphNodes: XmlNode[], ruleConfig: PaperRuleC
   };
 
   const buildEntryNode = (text: string): XmlNode => {
+    const entryRule = getTocEntryRule(tocRule, text);
     const node = createParagraphNode(text, {
-      fontFamily: tocRule.body.font ?? '宋体',
-      fontSizePt: tocRule.body.fontSizePt ?? 12,
-      alignment: tocRule.body.alignment,
+      fontFamily: entryRule.font ?? '宋体',
+      fontSizePt: entryRule.fontSizePt ?? 12,
+      alignment: entryRule.alignment,
     });
-    applyParagraphStyleRule(node, tocRule.body);
+    applyParagraphStyleRule(node, entryRule);
     return node;
   };
-
-  const fallbackEntries = [
-    '1 摘要........................1',
-    '2 参考文献........................2',
-  ];
 
   if (titleIndex < 0) {
     return [
       ...nextParagraphs,
       buildTitleNode(),
-      ...fallbackEntries.map((text) => buildEntryNode(text)),
     ];
   }
 
@@ -1126,31 +1487,32 @@ const ensureTableOfContents = (paragraphNodes: XmlNode[], ruleConfig: PaperRuleC
   }
 
   if (existingEntries.length === 0) {
-    nextParagraphs.splice(titleIndex + 1, 0, ...fallbackEntries.map((text) => buildEntryNode(text)));
     return nextParagraphs;
   }
 
-  existingEntries.forEach((paragraphNode) => applyParagraphStyleRule(paragraphNode, tocRule.body));
+  existingEntries.forEach((paragraphNode) => {
+    applyParagraphStyleRule(paragraphNode, getTocEntryRule(tocRule, getParagraphText(paragraphNode)));
+  });
   return nextParagraphs;
 };
 
-const collectReferencedTokens = (paragraphs: ParsedParagraph[], prefix: '图' | '表'): Array<{ token: string; index: number }> => {
+const collectReferencedTokensFromNodes = (paragraphNodes: XmlNode[], prefix: '图' | '表'): Array<{ token: string; index: number }> => {
   const pattern = new RegExp(`${prefix}\\s*\\d+(?:\\.\\d+)*`, 'g');
   const results: Array<{ token: string; index: number }> = [];
 
-  for (const paragraph of paragraphs) {
-    const matches = paragraph.text.match(pattern);
+  paragraphNodes.forEach((paragraphNode, index) => {
+    const matches = getParagraphText(paragraphNode).match(pattern);
     if (!matches) {
-      continue;
+      return;
     }
 
     for (const match of matches) {
       results.push({
         token: match.replace(/\s+/g, ''),
-        index: paragraph.index,
+        index: index + 1,
       });
     }
-  }
+  });
 
   return results;
 };
@@ -1163,26 +1525,44 @@ const extractCaptionToken = (text: string, prefix: '图' | '表'): string | unde
 const isValidCaption = (text: string, prefix: '图' | '表'): boolean =>
   new RegExp(`^${prefix}\\s*\\d+(?:\\.\\d+)*\\s+\\S+`).test(text.trim());
 
+const alignParsedParagraphsToNodes = (
+  paragraphNodes: XmlNode[],
+  parsedDocument: ParsedDocxModel
+): Array<ParsedParagraph | undefined> => {
+  let searchStart = 0;
+
+  return paragraphNodes.map((paragraphNode, index) => {
+    const text = getParagraphText(paragraphNode);
+    const matchedIndex = parsedDocument.paragraphs.findIndex((paragraph, paragraphIndex) =>
+      paragraphIndex >= searchStart && paragraph.text === text
+    );
+
+    if (matchedIndex >= 0) {
+      searchStart = matchedIndex + 1;
+      return parsedDocument.paragraphs[matchedIndex];
+    }
+
+    const fallback = parsedDocument.paragraphs[index];
+    return fallback?.text === text ? fallback : undefined;
+  });
+};
+
+const isMainContentHeadingText = (text: string): boolean => {
+  const resolved = text.trim();
+  return /^第[一二三四五六七八九十百千万0-9]+章\s+\S+/.test(resolved)
+    || /^\d+\.\d+(?:\.\d+)?\s+\S+/.test(resolved);
+};
+
 const repairCaptions = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxModel, ruleConfig: PaperRuleConfig): XmlNode[] => {
   const nextParagraphs = [...paragraphNodes];
 
   for (const prefix of ['图', '表'] as const) {
     const captionRule = getCaptionRule(prefix === '图' ? ruleConfig.figureCaptionRule : ruleConfig.tableCaptionRule, prefix);
-    const existingCaptionTokens = new Set<string>();
-
     nextParagraphs.forEach((paragraphNode) => {
       const text = getParagraphText(paragraphNode);
       const token = extractCaptionToken(text, prefix);
       if (!token) {
         return;
-      }
-
-      existingCaptionTokens.add(token);
-      if (!isValidCaption(text, prefix)) {
-        replaceParagraphText(paragraphNode, `${token} 待补充题注`, {
-          fontFamily: captionRule.font ?? '宋体',
-          fontSizePt: captionRule.fontSizePt ?? 10.5,
-        });
       }
 
       applyParagraphFormatting(paragraphNode, {
@@ -1194,80 +1574,55 @@ const repairCaptions = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxMod
         firstLineChars: captionRule.firstLineIndent,
       });
     });
-
-    const referencedTokens = collectReferencedTokens(parsedDocument.paragraphs, prefix);
-    for (const reference of referencedTokens) {
-      if (existingCaptionTokens.has(reference.token)) {
-        continue;
-      }
-
-      const insertIndex = Math.min(reference.index, nextParagraphs.length);
-      const newCaption = createParagraphNode(`${reference.token} 待补充题注`, {
-        fontFamily: captionRule.font ?? '宋体',
-        fontSizePt: captionRule.fontSizePt ?? 10.5,
-        alignment: captionRule.alignment ?? 'center',
-      });
-      applyParagraphFormatting(newCaption, {
-        fontFamily: captionRule.font,
-        fontSizePt: captionRule.fontSizePt,
-        alignment: captionRule.alignment,
-        lineHeight: captionRule.lineHeight,
-        spacing: captionRule.spacing,
-        firstLineChars: captionRule.firstLineIndent,
-      });
-      nextParagraphs.splice(insertIndex, 0, newCaption);
-      existingCaptionTokens.add(reference.token);
-    }
   }
 
   return nextParagraphs;
 };
 
-const applyParagraphLevelFixes = (paragraphNodes: XmlNode[], parsedDocument: ParsedDocxModel, ruleConfig: PaperRuleConfig): void => {
+const applyParagraphLevelFixes = (
+  paragraphNodes: XmlNode[],
+  parsedDocument: ParsedDocxModel,
+  ruleConfig: PaperRuleConfig,
+  options: { body: boolean; headings: boolean }
+): void => {
   const headingRuleMap = getHeadingRuleMap(ruleConfig);
   const bodyFont = hasNoRequirement(ruleConfig.bodyFont) ? undefined : ruleConfig.bodyFont;
   const bodyFontSize = parseFontSizePt(ruleConfig.bodyFontSize);
   const lineHeightRule = parseLineHeightRule(ruleConfig.lineHeight);
   const spacingRule = parseSpacingRule(ruleConfig.paragraphSpacing);
   const firstLineIndent = parseFirstLineIndentRule(ruleConfig.firstLineIndent);
-  const abstractTitleRule = getAbstractTitleRule(ruleConfig);
+  const alignedParsedParagraphs = alignParsedParagraphsToNodes(paragraphNodes, parsedDocument);
+  const firstMainHeadingIndex = parsedDocument.paragraphs
+    .find((paragraph) => paragraph.headingLevel && isMainContentHeadingText(paragraph.text))?.index;
 
-  parsedDocument.paragraphs.forEach((parsedParagraph, index) => {
-    const paragraphNode = paragraphNodes[index];
-    if (!paragraphNode) {
+  paragraphNodes.forEach((paragraphNode, index) => {
+    const parsedParagraph = alignedParsedParagraphs[index];
+    if (!parsedParagraph) {
       return;
     }
 
     const text = parsedParagraph.text;
 
-    if (matchesToken(text, '摘要') || matchesToken(text, 'abstract')) {
-      applyParagraphFormatting(paragraphNode, {
-        fontFamily: abstractTitleRule.font,
-        fontSizePt: abstractTitleRule.fontSizePt,
-        alignment: abstractTitleRule.alignment,
-      });
-      return;
-    }
-
-    if (/(关\s*键\s*词|keywords?)/i.test(text)) {
-      replaceParagraphText(paragraphNode, normalizeKeywordsLine(text), { fontFamily: bodyFont, fontSizePt: bodyFontSize });
+    if (!text || (firstMainHeadingIndex !== undefined && parsedParagraph.index < firstMainHeadingIndex)) {
       return;
     }
 
     if (parsedParagraph.headingLevel) {
-      const rule = headingRuleMap.get(parsedParagraph.headingLevel);
-      applyParagraphFormatting(paragraphNode, {
-        fontFamily: rule?.font,
-        fontSizePt: rule?.fontSizePt,
-        alignment: rule?.alignment,
-        lineHeight: rule?.lineHeight,
-        spacing: rule?.spacing,
-        firstLineChars: rule?.firstLineIndent,
-      });
+      if (options.headings) {
+        const rule = headingRuleMap.get(parsedParagraph.headingLevel);
+        applyParagraphFormatting(paragraphNode, {
+          fontFamily: rule?.font,
+          fontSizePt: rule?.fontSizePt,
+          alignment: rule?.alignment,
+          lineHeight: rule?.lineHeight,
+          spacing: rule?.spacing,
+          firstLineChars: rule?.firstLineIndent,
+        });
+      }
       return;
     }
 
-    if (!text) {
+    if (!options.body || !text) {
       return;
     }
 
@@ -1286,38 +1641,182 @@ export const createFixedDocumentDownload = async (input: {
   originalFilename: string;
   parsedDocument: ParsedDocxModel;
   ruleConfig: PaperRuleConfig;
+  fixOptions?: FixOption[];
+  logger?: FixExportLogger;
 }): Promise<{ buffer: Buffer; filename: string }> => {
   const buffer = await readFile(input.filePath);
   const zip = await JSZip.loadAsync(buffer);
+  const selectedFixOptions = new Set(input.fixOptions ?? defaultFixOptions);
+
+  await emitFixLog(input.logger, 'docx_fix.start', {
+    filePath: input.filePath,
+    originalFilename: input.originalFilename,
+    originalBytes: buffer.length,
+    selectedFixOptions: [...selectedFixOptions],
+    parsedParagraphCount: input.parsedDocument.paragraphs.length,
+    zipEntryCount: Object.keys(zip.files).length,
+    hasDocumentXml: Boolean(zip.file('word/document.xml')),
+    hasContentTypesXml: Boolean(zip.file('[Content_Types].xml')),
+    hasDocumentRels: Boolean(zip.file('word/_rels/document.xml.rels')),
+  });
 
   const documentXml = await zip.file('word/document.xml')?.async('string');
   if (!documentXml) {
+    await emitFixLog(input.logger, 'docx_fix.missing_document_xml');
     throw new Error('The uploaded .docx file does not contain word/document.xml.');
   }
 
+  await emitFixLog(input.logger, 'docx_fix.original_document_inspection', inspectDocumentXml(documentXml));
+
   const documentRoot = xmlParser.parse(documentXml) as XmlNode;
   ensureDocumentNamespace(documentRoot);
-  updateSectionPageLayout(documentRoot, input.ruleConfig);
-  await ensureHeaderAndFooter(zip, documentRoot, input.ruleConfig);
+  if (selectedFixOptions.has('page_layout')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', { option: 'page_layout' });
+    updateSectionPageLayout(documentRoot, input.ruleConfig);
+    await emitFixLog(input.logger, 'docx_fix.option.done', { option: 'page_layout' });
+  }
+  if (selectedFixOptions.has('header_footer')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', { option: 'header_footer' });
+    await ensureHeaderAndFooter(zip, documentRoot, input.ruleConfig);
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'header_footer',
+      hasDocumentRels: Boolean(zip.file('word/_rels/document.xml.rels')),
+      headerParts: Object.keys(zip.files).filter((name) => /^word\/header\d+\.xml$/i.test(name)),
+      footerParts: Object.keys(zip.files).filter((name) => /^word\/footer\d+\.xml$/i.test(name)),
+    });
+  }
 
-  let paragraphNodes = getBodyParagraphNodes(documentRoot);
-  applyParagraphLevelFixes(paragraphNodes, input.parsedDocument, input.ruleConfig);
-  paragraphNodes = ensureAbstractAndKeywords(paragraphNodes, input.parsedDocument, input.ruleConfig);
-  paragraphNodes = ensureTableOfContents(paragraphNodes, input.ruleConfig);
-  paragraphNodes = repairCaptions(paragraphNodes, input.parsedDocument, input.ruleConfig);
-  paragraphNodes = addMissingCoverFields(paragraphNodes, input.ruleConfig);
-  paragraphNodes = ensureConfiguredSections(paragraphNodes, input.ruleConfig);
-  paragraphNodes = ensureSection(paragraphNodes, '参考文献', sectionPlaceholderBodies.参考文献);
+  const originalParagraphNodes = getBodyParagraphNodes(documentRoot);
+  const originalParagraphSnapshots = new WeakMap<XmlNode, string>();
+  originalParagraphNodes.forEach((paragraphNode) => {
+    originalParagraphSnapshots.set(paragraphNode, JSON.stringify(paragraphNode));
+  });
+  let paragraphNodes = [...originalParagraphNodes];
+  await emitFixLog(input.logger, 'docx_fix.paragraphs.loaded', {
+    original: inspectParagraphNodes(originalParagraphNodes),
+  });
+  if (selectedFixOptions.has('body_format') || selectedFixOptions.has('heading_format')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', {
+      option: 'paragraph_format',
+      enabledOptions: {
+        body: selectedFixOptions.has('body_format'),
+        headings: selectedFixOptions.has('heading_format'),
+      },
+      before: inspectParagraphNodes(paragraphNodes),
+    });
+    applyParagraphLevelFixes(paragraphNodes, input.parsedDocument, input.ruleConfig, {
+      body: selectedFixOptions.has('body_format'),
+      headings: selectedFixOptions.has('heading_format'),
+    });
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'paragraph_format',
+      enabledOptions: {
+        body: selectedFixOptions.has('body_format'),
+        headings: selectedFixOptions.has('heading_format'),
+      },
+      after: inspectParagraphNodes(paragraphNodes),
+    });
+  }
+  if (selectedFixOptions.has('abstract_keywords')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', {
+      option: 'abstract_keywords',
+      before: inspectParagraphNodes(paragraphNodes),
+    });
+    paragraphNodes = ensureAbstractAndKeywords(paragraphNodes, input.parsedDocument, input.ruleConfig);
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'abstract_keywords',
+      after: inspectParagraphNodes(paragraphNodes),
+    });
+  }
+  if (selectedFixOptions.has('toc')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', {
+      option: 'toc',
+      before: inspectParagraphNodes(paragraphNodes),
+    });
+    paragraphNodes = ensureTableOfContents(paragraphNodes, input.ruleConfig);
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'toc',
+      after: inspectParagraphNodes(paragraphNodes),
+    });
+  }
+  if (selectedFixOptions.has('captions')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', {
+      option: 'captions',
+      before: inspectParagraphNodes(paragraphNodes),
+    });
+    paragraphNodes = repairCaptions(paragraphNodes, input.parsedDocument, input.ruleConfig);
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'captions',
+      after: inspectParagraphNodes(paragraphNodes),
+    });
+  }
+  if (selectedFixOptions.has('cover_fields')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', {
+      option: 'cover_fields',
+      before: inspectParagraphNodes(paragraphNodes),
+    });
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'cover_fields',
+      skipped: 'missing cover fields are not auto-generated',
+      after: inspectParagraphNodes(paragraphNodes),
+    });
+  }
+  if (selectedFixOptions.has('required_sections')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', {
+      option: 'required_sections',
+      before: inspectParagraphNodes(paragraphNodes),
+    });
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'required_sections',
+      skipped: 'missing required sections are not auto-generated',
+      after: inspectParagraphNodes(paragraphNodes),
+    });
+  }
+  if (selectedFixOptions.has('references_section')) {
+    await emitFixLog(input.logger, 'docx_fix.option.start', {
+      option: 'references_section',
+      before: inspectParagraphNodes(paragraphNodes),
+    });
+    await emitFixLog(input.logger, 'docx_fix.option.done', {
+      option: 'references_section',
+      skipped: 'missing references are not auto-generated',
+      after: inspectParagraphNodes(paragraphNodes),
+    });
+  }
   setBodyParagraphNodes(documentRoot, paragraphNodes);
 
-  zip.file('word/document.xml', buildXml(documentRoot));
+  const documentRebuildStats: DocumentRebuildStats = {
+    preservedOriginalParagraphs: 0,
+    rebuiltOriginalParagraphs: 0,
+    insertedParagraphs: 0,
+  };
+  const repairedDocumentXml = buildOrderedDocumentXml(
+    documentXml,
+    documentRoot,
+    originalParagraphNodes,
+    paragraphNodes,
+    originalParagraphSnapshots,
+    documentRebuildStats
+  );
+  await emitFixLog(input.logger, 'docx_fix.document_rebuild', { ...documentRebuildStats });
+  const repairedInspection = inspectDocumentXml(repairedDocumentXml);
+  await emitFixLog(input.logger, 'docx_fix.repaired_document_inspection', repairedInspection);
+  zip.file('word/document.xml', repairedDocumentXml);
 
   const repairedBuffer = await zip.generateAsync({ type: 'nodebuffer' });
   const ext = path.extname(input.originalFilename) || '.docx';
   const basename = path.basename(input.originalFilename, ext);
+  const filename = `${basename}_fixed_${formatTimestampForFilename(new Date())}${ext}`;
+
+  await emitFixLog(input.logger, 'docx_fix.done', {
+    outputFilename: filename,
+    outputBytes: repairedBuffer.length,
+    zipEntryCount: Object.keys(zip.files).length,
+    repairedInspection,
+  });
 
   return {
     buffer: repairedBuffer,
-    filename: `${basename}_fixed${ext}`,
+    filename,
   };
 };

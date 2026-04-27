@@ -19,6 +19,20 @@ export interface PaperRuleConfig {
   tocRule?: string;
 }
 
+export const fixOptionValues = [
+  'page_layout',
+  'header_footer',
+  'body_format',
+  'heading_format',
+  'abstract_keywords',
+  'toc',
+  'captions',
+  'cover_fields',
+  'required_sections',
+  'references_section',
+] as const;
+export type FixOption = typeof fixOptionValues[number];
+
 export interface RuleTemplate {
   id: string;
   ownerId: string;
@@ -55,6 +69,48 @@ export interface CheckIssue {
   severity: 'high' | 'medium' | 'low';
 }
 
+export interface RecognizedContentItem {
+  id: string;
+  section:
+    | 'body'
+    | 'heading'
+    | 'header'
+    | 'footer'
+    | 'toc'
+    | 'abstract'
+    | 'keywords'
+    | 'references'
+    | 'acknowledgement'
+    | 'originality_statement'
+    | 'appendix';
+  index: number;
+  text: string;
+  pageNumber?: number;
+  styleId?: string;
+  styleName?: string;
+  headingLevel?: number;
+  displayHeadingLevel?: number;
+  hasPageBreakAfter?: boolean;
+  isInTable?: boolean;
+  alignment?: 'left' | 'center' | 'right' | 'both' | 'justify' | 'distribute';
+  fontFamily?: string;
+  fontFamilies?: string[];
+  fontSizePt?: number;
+  fontColor?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  underlineStyle?: string;
+  lineHeight?: number;
+  lineHeightMode?: 'multiple' | 'points';
+  spacingBeforePt?: number;
+  spacingAfterPt?: number;
+  firstLineChars?: number;
+  leftIndentChars?: number;
+  rightIndentChars?: number;
+  hangingIndentChars?: number;
+}
+
 export interface CheckResult {
   id: string;
   userId: string;
@@ -63,6 +119,7 @@ export interface CheckResult {
   status: 'pending' | 'checking' | 'completed' | 'failed';
   totalIssues: number;
   issues: CheckIssue[];
+  recognizedContents: RecognizedContentItem[];
   createdAt: string;
 }
 

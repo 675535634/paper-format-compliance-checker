@@ -8,10 +8,12 @@ type OrderedXmlNode = Record<string, unknown>;
 
 interface StyleDefinition {
   id: string;
+  type?: string;
   name?: string;
   basedOn?: string;
   paragraphProperties?: XmlNode;
   runProperties?: XmlNode;
+  isDefault?: boolean;
 }
 
 interface NumberingDefinition {
@@ -183,15 +185,20 @@ const buildStyleMap = (stylesDocument: XmlNode | undefined): Map<string, StyleDe
 
     map.set(id, {
       id,
+      type: getWordAttr(style, 'type'),
       name: getWordAttr(nameNode, 'val'),
       basedOn: getWordAttr(basedOnNode, 'val'),
       paragraphProperties: toXmlObject(style['w:pPr']),
       runProperties: toXmlObject(style['w:rPr']),
+      isDefault: getWordAttr(style, 'default') === '1',
     });
   }
 
   return map;
 };
+
+const getDefaultParagraphStyleId = (styleMap: Map<string, StyleDefinition>): string | undefined =>
+  [...styleMap.values()].find((style) => style.type === 'paragraph' && style.isDefault)?.id;
 
 const buildNumberingMap = (numberingDocument: XmlNode | undefined): Map<string, NumberingDefinition> => {
   const map = new Map<string, NumberingDefinition>();
@@ -294,6 +301,95 @@ const collectRunNodes = (paragraphNode: XmlNode): XmlNode[] => {
   return [...directRuns, ...hyperlinkRuns];
 };
 
+const uniqueDefined = <T>(values: Array<T | undefined>): T[] =>
+  [...new Set(values.filter((value): value is T => value !== undefined))];
+
+const getVisibleTextRunProperties = (runNodes: XmlNode[], fallbackRunProperties?: XmlNode): XmlNode[] =>
+  runNodes
+    .map((runNode) => ({
+      runProperties: toXmlObject(runNode['w:rPr']),
+      textLength: getTextValue(runNode['w:t']).trim().length,
+    }))
+    .filter((item) => item.textLength > 0)
+    .sort((first, second) => second.textLength - first.textLength)
+    .map((item) => mergeProperties(fallbackRunProperties, item.runProperties))
+    .filter(Boolean) as XmlNode[];
+
+const getFontFamilyFromRunProperties = (runProperties: XmlNode | undefined): string | undefined => {
+  const fonts = toXmlObject(runProperties?.['w:rFonts']);
+
+  return getWordAttr(fonts, 'eastAsia')
+    ?? getWordAttr(fonts, 'ascii')
+    ?? getWordAttr(fonts, 'hAnsi');
+};
+
+const getFontSizeFromRunProperties = (runProperties: XmlNode | undefined): number | undefined =>
+  sizeHalfPointsToPt(getWordAttr(toXmlObject(runProperties?.['w:sz']), 'val'));
+
+const getFontColorFromRunProperties = (runProperties: XmlNode | undefined): string | undefined => {
+  const color = getWordAttr(toXmlObject(runProperties?.['w:color']), 'val');
+  if (!color || color.toLowerCase() === 'auto') {
+    return undefined;
+  }
+
+  return color.startsWith('#') ? color : `#${color}`;
+};
+
+const readBooleanWordProperty = (runProperties: XmlNode | undefined, key: 'w:b' | 'w:i'): boolean | undefined => {
+  if (!runProperties || !Object.prototype.hasOwnProperty.call(runProperties, key)) {
+    return undefined;
+  }
+
+  const node = toXmlObject(runProperties[key]);
+  const value = getWordAttr(node, 'val');
+  return value === undefined || !['0', 'false', 'off'].includes(value.toLowerCase());
+};
+
+const getUnderlineStyleFromRunProperties = (runProperties: XmlNode | undefined): string | undefined => {
+  if (!runProperties || !Object.prototype.hasOwnProperty.call(runProperties, 'w:u')) {
+    return undefined;
+  }
+
+  const value = getWordAttr(toXmlObject(runProperties['w:u']), 'val');
+  if (value && ['none', '0', 'false', 'off'].includes(value.toLowerCase())) {
+    return 'none';
+  }
+
+  return value ?? 'single';
+};
+
+const getFirstDefined = <T>(values: Array<T | undefined>): T | undefined =>
+  values.find((value) => value !== undefined);
+
+const getAnyBoolean = (values: Array<boolean | undefined>): boolean | undefined =>
+  values.some((value) => value === true)
+    ? true
+    : values.some((value) => value === false)
+      ? false
+      : undefined;
+
+const nodeContainsExplicitPageBreak = (value: unknown): boolean => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => nodeContainsExplicitPageBreak(item));
+  }
+
+  const node = value as XmlNode;
+  if (Object.prototype.hasOwnProperty.call(node, 'w:lastRenderedPageBreak')) {
+    return true;
+  }
+
+  const breakNode = toXmlObject(node['w:br']);
+  if (breakNode && getWordAttr(breakNode, 'type') === 'page') {
+    return true;
+  }
+
+  return Object.values(node).some((child) => nodeContainsExplicitPageBreak(child));
+};
+
 const extractParagraphText = (paragraphNode: XmlNode): string =>
   collectRunNodes(paragraphNode)
     .map((runNode) => getTextValue(runNode['w:t']))
@@ -338,6 +434,28 @@ const collectOrderedParagraphEntries = (nodes: OrderedXmlNode[]): OrderedXmlNode
   return paragraphs;
 };
 
+interface OrderedParagraphEntry {
+  entry: OrderedXmlNode;
+  isInTable: boolean;
+}
+
+const collectOrderedParagraphEntryInfo = (nodes: OrderedXmlNode[], isInTable = false): OrderedParagraphEntry[] => {
+  const paragraphs: OrderedParagraphEntry[] = [];
+
+  for (const node of nodes) {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'w:p') {
+        paragraphs.push({ entry: { [key]: toOrderedXmlNodes(value) }, isInTable });
+        continue;
+      }
+
+      paragraphs.push(...collectOrderedParagraphEntryInfo(toOrderedXmlNodes(value), isInTable || key === 'w:tbl'));
+    }
+  }
+
+  return paragraphs;
+};
+
 const extractOrderedParagraphNodes = (
   xml: string,
   rootKey: 'w:document' | 'w:hdr' | 'w:ftr',
@@ -351,6 +469,19 @@ const extractOrderedParagraphNodes = (
     })
     .filter(Boolean) as XmlNode[];
 
+const extractOrderedParagraphNodeInfo = (
+  xml: string,
+  rootKey: 'w:document' | 'w:hdr' | 'w:ftr',
+  nestedKey?: 'w:body'
+): Array<{ node: XmlNode; isInTable: boolean }> =>
+  collectOrderedParagraphEntryInfo(getOrderedRootChildren(xml, rootKey, nestedKey))
+    .map(({ entry, isInTable }) => {
+      const paragraphXml = orderedXmlBuilder.build([entry]);
+      const parsed = xmlParser.parse(paragraphXml) as XmlNode;
+      return { node: toXmlObject(parsed['w:p']), isInTable };
+    })
+    .filter((item): item is { node: XmlNode; isInTable: boolean } => Boolean(item.node));
+
 const extractDocumentParagraphTexts = (xml: string, rootKey: 'w:hdr' | 'w:ftr'): string[] => {
   return extractOrderedParagraphNodes(xml, rootKey)
     .map((paragraphNode) => extractParagraphText(paragraphNode))
@@ -362,16 +493,61 @@ const extractExternalParagraphs = (
   rootKey: 'w:hdr' | 'w:ftr',
   styleMap: Map<string, StyleDefinition>,
   numberingMap: Map<string, NumberingDefinition>,
-  defaults: { fontFamily?: string; fontSizePt?: number }
+  defaults: { fontFamily?: string; fontSizePt?: number },
+  defaultParagraphStyleId?: string
 ): ParsedParagraph[] => {
-  return extractOrderedParagraphNodes(xml, rootKey).map((paragraphNode, index) => ({
-    index: index + 1,
-    text: extractParagraphText(paragraphNode),
-    ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults),
-  }));
+  return extractOrderedParagraphNodes(xml, rootKey).map((paragraphNode, index) => {
+    const text = extractParagraphText(paragraphNode);
+
+    return {
+      index: index + 1,
+      text,
+      ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults, defaultParagraphStyleId, text),
+    };
+  });
 };
 
-const parseHeadingLevel = (styleId: string | undefined, styleName: string | undefined, paragraphProperties?: XmlNode): number | undefined => {
+const hasTocStyle = (styleId: string | undefined, styleName: string | undefined): boolean => {
+  const normalizedStyleId = (styleId ?? '').toLowerCase();
+  const normalizedStyleName = (styleName ?? '').toLowerCase();
+  const source = `${normalizedStyleId} ${normalizedStyleName}`;
+
+  return /^toc\d*$/i.test(styleId ?? '')
+    || /^toc\b/.test(normalizedStyleName)
+    || source.includes('toc ');
+};
+
+const inferHeadingLevelFromText = (
+  paragraphText: string,
+  styleId: string | undefined,
+  styleName: string | undefined
+): number | undefined => {
+  const text = paragraphText.trim();
+  if (!text || hasTocStyle(styleId, styleName)) {
+    return undefined;
+  }
+
+  if (/^第[一二三四五六七八九十百千万0-9]+章\s+\S+/.test(text)) {
+    return 1;
+  }
+
+  if (/^\d+\.\d+\.\d+\s+\S+/.test(text)) {
+    return 3;
+  }
+
+  if (/^\d+\.\d+\s+\S+/.test(text)) {
+    return 2;
+  }
+
+  return undefined;
+};
+
+const parseHeadingLevel = (
+  styleId: string | undefined,
+  styleName: string | undefined,
+  paragraphProperties: XmlNode | undefined,
+  paragraphText: string
+): number | undefined => {
   const outlineLevel = getWordAttr(toXmlObject(paragraphProperties?.['w:outlineLvl']), 'val');
   if (outlineLevel) {
     const numeric = Number.parseInt(outlineLevel, 10);
@@ -386,33 +562,72 @@ const parseHeadingLevel = (styleId: string | undefined, styleName: string | unde
     return Number.parseInt(headingMatch[1], 10);
   }
 
-  return undefined;
+  return inferHeadingLevelFromText(paragraphText, styleId, styleName);
 };
 
 const resolveParagraphMetrics = (
   paragraphNode: XmlNode,
   styleMap: Map<string, StyleDefinition>,
   numberingMap: Map<string, NumberingDefinition>,
-  defaults: { fontFamily?: string; fontSizePt?: number }
+  defaults: { fontFamily?: string; fontSizePt?: number },
+  defaultParagraphStyleId: string | undefined,
+  paragraphText: string
 ): Omit<ParsedParagraph, 'index' | 'text'> => {
   const paragraphProperties = toXmlObject(paragraphNode['w:pPr']);
-  const styleId = getWordAttr(toXmlObject(paragraphProperties?.['w:pStyle']), 'val');
+  const styleId = getWordAttr(toXmlObject(paragraphProperties?.['w:pStyle']), 'val') ?? defaultParagraphStyleId;
   const resolvedStyle = resolveStyle(styleId, styleMap);
   const mergedParagraphProperties = mergeProperties(resolvedStyle?.paragraphProperties, paragraphProperties);
 
   const runNodes = collectRunNodes(paragraphNode);
-  const firstRunProperties = mergeProperties(
-    resolvedStyle?.runProperties,
-    toXmlObject(runNodes[0]?.['w:rPr'])
+  const paragraphMarkRunProperties = toXmlObject(mergedParagraphProperties?.['w:rPr']);
+  const runProperties = runNodes
+    .map((runNode) => toXmlObject(runNode['w:rPr']))
+    .filter(Boolean) as XmlNode[];
+  const visibleRunProperties = getVisibleTextRunProperties(runNodes, resolvedStyle?.runProperties);
+  const hasVisibleTextRunProperties = visibleRunProperties.length > 0;
+  const candidateRunProperties = visibleRunProperties.length > 0 ? visibleRunProperties : runProperties;
+
+  const fontFamily = candidateRunProperties
+      .map((runProperty) => getFontFamilyFromRunProperties(runProperty))
+      .find(Boolean)
+    ?? getFontFamilyFromRunProperties(resolvedStyle?.runProperties)
+    ?? defaults.fontFamily
+    ?? (hasVisibleTextRunProperties ? undefined : getFontFamilyFromRunProperties(paragraphMarkRunProperties));
+  const fontFamilies = uniqueDefined(
+    candidateRunProperties.map((runProperty) =>
+      getFontFamilyFromRunProperties(runProperty) ?? defaults.fontFamily
+    )
   );
 
-  const fonts = toXmlObject(firstRunProperties?.['w:rFonts']);
-  const fontFamily = getWordAttr(fonts, 'eastAsia')
-    ?? getWordAttr(fonts, 'ascii')
-    ?? getWordAttr(fonts, 'hAnsi')
-    ?? defaults.fontFamily;
+  const fontSizePt = candidateRunProperties
+      .map((runProperty) => getFontSizeFromRunProperties(runProperty))
+      .find((value) => value !== undefined)
+    ?? getFontSizeFromRunProperties(resolvedStyle?.runProperties)
+    ?? defaults.fontSizePt
+    ?? (hasVisibleTextRunProperties ? undefined : getFontSizeFromRunProperties(paragraphMarkRunProperties));
 
-  const fontSizePt = sizeHalfPointsToPt(getWordAttr(toXmlObject(firstRunProperties?.['w:sz']), 'val')) ?? defaults.fontSizePt;
+  const fontColor = candidateRunProperties
+      .map((runProperty) => getFontColorFromRunProperties(runProperty))
+      .find(Boolean)
+    ?? getFontColorFromRunProperties(resolvedStyle?.runProperties)
+    ?? (hasVisibleTextRunProperties ? undefined : getFontColorFromRunProperties(paragraphMarkRunProperties));
+
+  const bold = getAnyBoolean([
+    ...candidateRunProperties.map((runProperty) => readBooleanWordProperty(runProperty, 'w:b')),
+    readBooleanWordProperty(resolvedStyle?.runProperties, 'w:b'),
+    hasVisibleTextRunProperties ? undefined : readBooleanWordProperty(paragraphMarkRunProperties, 'w:b'),
+  ]);
+  const italic = getAnyBoolean([
+    ...candidateRunProperties.map((runProperty) => readBooleanWordProperty(runProperty, 'w:i')),
+    readBooleanWordProperty(resolvedStyle?.runProperties, 'w:i'),
+    hasVisibleTextRunProperties ? undefined : readBooleanWordProperty(paragraphMarkRunProperties, 'w:i'),
+  ]);
+  const underlineStyle = getFirstDefined([
+    ...candidateRunProperties.map((runProperty) => getUnderlineStyleFromRunProperties(runProperty)),
+    getUnderlineStyleFromRunProperties(resolvedStyle?.runProperties),
+    hasVisibleTextRunProperties ? undefined : getUnderlineStyleFromRunProperties(paragraphMarkRunProperties),
+  ]);
+  const underline = underlineStyle === undefined ? undefined : underlineStyle !== 'none';
 
   const spacing = toXmlObject(mergedParagraphProperties?.['w:spacing']);
   const lineRaw = getWordAttr(spacing, 'line');
@@ -428,7 +643,33 @@ const resolveParagraphMetrics = (
 
   const indentation = toXmlObject(mergedParagraphProperties?.['w:ind']);
   const firstLineChars = Number.parseFloat(getWordAttr(indentation, 'firstLineChars') ?? '');
-  const firstLineCharsValue = Number.isFinite(firstLineChars) ? firstLineChars / 100 : undefined;
+  const firstLineTwips = Number.parseFloat(getWordAttr(indentation, 'firstLine') ?? '');
+  const leftChars = Number.parseFloat(getWordAttr(indentation, 'leftChars') ?? '');
+  const leftTwips = Number.parseFloat(getWordAttr(indentation, 'left') ?? '');
+  const rightChars = Number.parseFloat(getWordAttr(indentation, 'rightChars') ?? '');
+  const rightTwips = Number.parseFloat(getWordAttr(indentation, 'right') ?? '');
+  const hangingChars = Number.parseFloat(getWordAttr(indentation, 'hangingChars') ?? '');
+  const hangingTwips = Number.parseFloat(getWordAttr(indentation, 'hanging') ?? '');
+  const firstLineCharsValue = Number.isFinite(firstLineChars)
+    ? firstLineChars / 100
+    : Number.isFinite(firstLineTwips) && fontSizePt
+      ? (firstLineTwips / 20) / fontSizePt
+      : undefined;
+  const leftIndentCharsValue = Number.isFinite(leftChars)
+    ? leftChars / 100
+    : Number.isFinite(leftTwips) && fontSizePt
+      ? (leftTwips / 20) / fontSizePt
+      : undefined;
+  const rightIndentCharsValue = Number.isFinite(rightChars)
+    ? rightChars / 100
+    : Number.isFinite(rightTwips) && fontSizePt
+      ? (rightTwips / 20) / fontSizePt
+      : undefined;
+  const hangingIndentCharsValue = Number.isFinite(hangingChars)
+    ? hangingChars / 100
+    : Number.isFinite(hangingTwips) && fontSizePt
+      ? (hangingTwips / 20) / fontSizePt
+      : undefined;
   const numberingProperties = toXmlObject(mergedParagraphProperties?.['w:numPr']);
   const numId = getWordAttr(toXmlObject(numberingProperties?.['w:numId']), 'val');
   const level = parseLevelNumber(getWordAttr(toXmlObject(numberingProperties?.['w:ilvl']), 'val'));
@@ -437,17 +678,26 @@ const resolveParagraphMetrics = (
   const numberingFormat = levelDefinition?.format;
 
   return {
-    styleId,
+    styleId: getWordAttr(toXmlObject(paragraphProperties?.['w:pStyle']), 'val'),
     styleName: resolvedStyle?.name,
-    headingLevel: parseHeadingLevel(styleId, resolvedStyle?.name, mergedParagraphProperties),
-    alignment: getParagraphAlignment({ 'w:pPr': mergedParagraphProperties } as XmlNode) as 'left' | 'center' | 'right' | undefined,
+    headingLevel: parseHeadingLevel(styleId, resolvedStyle?.name, mergedParagraphProperties, paragraphText),
+    alignment: getParagraphAlignment({ 'w:pPr': mergedParagraphProperties } as XmlNode) as ParsedParagraph['alignment'],
     fontFamily,
+    fontFamilies: fontFamilies.length > 1 ? fontFamilies : undefined,
     fontSizePt,
+    fontColor,
+    bold,
+    italic,
+    underline,
+    underlineStyle,
     lineHeight,
     lineHeightMode,
     spacingBeforePt: twipsToPt(getWordAttr(spacing, 'before')),
     spacingAfterPt: twipsToPt(getWordAttr(spacing, 'after')),
     firstLineChars: firstLineCharsValue,
+    leftIndentChars: leftIndentCharsValue,
+    rightIndentChars: rightIndentCharsValue,
+    hangingIndentChars: hangingIndentCharsValue,
     numbering: numId ? {
       numId,
       level,
@@ -493,14 +743,28 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
   const styleMap = buildStyleMap(stylesRoot);
   const numberingMap = buildNumberingMap(numberingRoot);
   const defaults = getDocumentDefaults(stylesRoot);
+  const defaultParagraphStyleId = getDefaultParagraphStyleId(styleMap);
 
   const body = toXmlObject(toXmlObject(documentRoot['w:document'])?.['w:body']);
-  const paragraphNodes = extractOrderedParagraphNodes(documentXml, 'w:document', 'w:body');
-  const paragraphs: ParsedParagraph[] = paragraphNodes.map((paragraphNode, index) => ({
-    index: index + 1,
-    text: extractParagraphText(paragraphNode),
-    ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults),
-  }));
+  const paragraphNodeInfo = extractOrderedParagraphNodeInfo(documentXml, 'w:document', 'w:body');
+  let currentPageNumber = 1;
+  const paragraphs: ParsedParagraph[] = paragraphNodeInfo.map(({ node: paragraphNode, isInTable }, index) => {
+    const text = extractParagraphText(paragraphNode);
+    const pageNumber = currentPageNumber;
+    const hasPageBreakAfter = nodeContainsExplicitPageBreak(paragraphNode);
+    if (hasPageBreakAfter) {
+      currentPageNumber += 1;
+    }
+
+    return {
+      index: index + 1,
+      text,
+      pageNumber,
+      hasPageBreakAfter,
+      isInTable,
+      ...resolveParagraphMetrics(paragraphNode, styleMap, numberingMap, defaults, defaultParagraphStyleId, text),
+    };
+  });
 
   const sectionProperties = getSectionProperties(documentRoot);
   const pageSize = toXmlObject(sectionProperties?.['w:pgSz']);
@@ -541,14 +805,14 @@ export const parseDocxFile = async (filePath: string): Promise<ParsedDocxModel> 
       .filter(Boolean),
     headerParagraphs: headerContents
       .flatMap((header) => typeof header === 'string'
-        ? extractExternalParagraphs(header, 'w:hdr', styleMap, numberingMap, defaults)
+        ? extractExternalParagraphs(header, 'w:hdr', styleMap, numberingMap, defaults, defaultParagraphStyleId)
         : []),
     footerTexts: footerContents
       .flatMap((footer) => typeof footer === 'string' ? extractDocumentParagraphTexts(footer, 'w:ftr') : [])
       .filter(Boolean),
     footerParagraphs: footerContents
       .flatMap((footer) => typeof footer === 'string'
-        ? extractExternalParagraphs(footer, 'w:ftr', styleMap, numberingMap, defaults)
+        ? extractExternalParagraphs(footer, 'w:ftr', styleMap, numberingMap, defaults, defaultParagraphStyleId)
         : []),
     pageSize: widthCm && heightCm ? {
       widthCm,

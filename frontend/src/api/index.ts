@@ -4,6 +4,7 @@ import type {
   AuthSession,
   AuthUser,
   DashboardStats,
+  FixOption,
   PublicTemplateListResult,
   PublicTemplateSummary,
   RuleTemplate,
@@ -274,9 +275,9 @@ export const api = {
     }
   },
 
-  downloadFixedDocx: async (checkId: string): Promise<DownloadResponse> => {
+  downloadFixedDocx: async (checkId: string, fixOptions?: FixOption[]): Promise<DownloadResponse> => {
     try {
-      const response = await apiClient.get<Blob>(`/checks/${checkId}/fix-download`, {
+      const response = await apiClient.post<Blob>(`/checks/${checkId}/fix-download`, { fixOptions }, {
         responseType: 'blob',
         timeout: 120000,
       });

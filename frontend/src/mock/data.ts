@@ -116,5 +116,6 @@ export const mockCheckResult: CheckResult = {
   status: 'completed',
   totalIssues: mockIssues.length,
   issues: mockIssues,
+  recognizedContents: [],
   createdAt: '2026-04-21 15:00:00',
 };

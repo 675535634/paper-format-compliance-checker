@@ -3,6 +3,19 @@ export type Severity = 'high' | 'medium' | 'low';
 export type UploadStatus = 'uploading' | 'success' | 'error';
 export type CheckStatus = 'pending' | 'checking' | 'completed' | 'failed';
 export type TemplateVisibility = 'private' | 'public';
+export const fixOptionValues = [
+  'page_layout',
+  'header_footer',
+  'body_format',
+  'heading_format',
+  'abstract_keywords',
+  'toc',
+  'captions',
+  'cover_fields',
+  'required_sections',
+  'references_section',
+] as const;
+export type FixOption = typeof fixOptionValues[number];
 
 export interface PaperRuleConfig {
   pageSize: string;
@@ -64,6 +77,25 @@ export interface CheckIssue {
   severity: Severity;
 }
 
+export type RecognizedContentSection =
+  | 'body'
+  | 'heading'
+  | 'header'
+  | 'footer'
+  | 'toc'
+  | 'abstract'
+  | 'keywords'
+  | 'references'
+  | 'acknowledgement'
+  | 'originality_statement'
+  | 'appendix';
+
+export interface RecognizedContentItem extends ParsedParagraph {
+  id: string;
+  section: RecognizedContentSection;
+  displayHeadingLevel?: number;
+}
+
 export interface CheckTask {
   id: string;
   userId: string;
@@ -88,6 +120,7 @@ export interface CheckResult {
   status: CheckStatus;
   totalIssues: number;
   issues: CheckIssue[];
+  recognizedContents: RecognizedContentItem[];
   createdAt: string;
 }
 
@@ -115,6 +148,7 @@ export interface StoredCheckResult {
   status: CheckStatus;
   totalIssues: number;
   issues: CheckIssue[];
+  recognizedContents?: RecognizedContentItem[];
   createdAt: string;
 }
 
@@ -183,17 +217,29 @@ export interface DatabaseState {
 export interface ParsedParagraph {
   index: number;
   text: string;
+  pageNumber?: number;
   styleId?: string;
   styleName?: string;
   headingLevel?: number;
-  alignment?: 'left' | 'center' | 'right';
+  hasPageBreakAfter?: boolean;
+  isInTable?: boolean;
+  alignment?: 'left' | 'center' | 'right' | 'both' | 'justify' | 'distribute';
   fontFamily?: string;
+  fontFamilies?: string[];
   fontSizePt?: number;
+  fontColor?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  underlineStyle?: string;
   lineHeight?: number;
   lineHeightMode?: 'multiple' | 'points';
   spacingBeforePt?: number;
   spacingAfterPt?: number;
   firstLineChars?: number;
+  leftIndentChars?: number;
+  rightIndentChars?: number;
+  hangingIndentChars?: number;
   numbering?: {
     numId?: string;
     level?: number;

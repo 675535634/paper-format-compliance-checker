@@ -91,6 +91,7 @@ const normalizeResult = (result: Partial<StoredCheckResult>, index: number): Sto
   status: result.status ?? 'completed',
   totalIssues: result.totalIssues ?? result.issues?.length ?? 0,
   issues: result.issues ?? [],
+  recognizedContents: result.recognizedContents ?? [],
   createdAt: result.createdAt ?? now(),
 });
 

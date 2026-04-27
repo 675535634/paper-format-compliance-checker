@@ -26,7 +26,7 @@ type SizeMode = 'none' | 'named' | 'custom';
 type LineHeightMode = 'none' | 'fixed' | 'multiple';
 type SpacingMode = 'none' | 'custom';
 type IndentMode = 'none' | 'custom';
-type AlignmentOption = 'none' | 'left' | 'center' | 'right';
+type AlignmentOption = 'none' | 'left' | 'center' | 'right' | 'justify';
 type PagePosition = 'top' | 'bottom';
 type PageNumberMode = 'none' | 'custom';
 type NumberStyle = 'none' | 'arabic' | 'romanLower' | 'romanUpper' | 'chinese';
@@ -94,7 +94,9 @@ interface CaptionFormValue extends ParagraphStyleFormValue {
 interface TocFormValue {
   mode: 'none' | 'custom';
   title: ParagraphStyleFormValue;
-  body: ParagraphStyleFormValue;
+  chapter: ParagraphStyleFormValue;
+  section: ParagraphStyleFormValue;
+  subsection: ParagraphStyleFormValue;
 }
 
 interface RuleFormValues {
@@ -135,6 +137,7 @@ interface RuleFormValues {
   abstract: {
     titleFont: FontChoiceValue;
     titleSize: SizeChoiceValue;
+    titleBold: 'none' | 'bold' | 'normal';
     titleAlignment: AlignmentOption;
     titleLineHeight: LineHeightValue;
     titleSpacing: SpacingValue;
@@ -267,6 +270,7 @@ const getRulesCopy = (isEnglish: boolean) => isEnglish
       delete: 'Delete',
       level: 'Level',
       abstractTitle: 'Abstract Title',
+      abstractTitleStyle: 'Title Style',
       abstractBody: 'Abstract Body',
       abstractLength: 'Word Count Range',
       keywords: 'Keywords',
@@ -278,7 +282,9 @@ const getRulesCopy = (isEnglish: boolean) => isEnglish
       tableCaption: 'Table Caption',
       toc: 'Table of Contents',
       tocTitle: 'TOC Title',
-      tocBody: 'TOC Entries',
+      tocChapter: 'Chapter TOC Entries',
+      tocSection: 'First-Level Section TOC Entries',
+      tocSubsection: 'Second-Level Section TOC Entries',
       checkMode: 'Check Mode',
       font: 'Font',
       size: 'Font Size',
@@ -297,6 +303,7 @@ const getRulesCopy = (isEnglish: boolean) => isEnglish
       left: 'Left',
       center: 'Center',
       right: 'Right',
+      justify: 'Justify',
       top: 'Top',
       bottom: 'Bottom',
       arabic: 'Arabic',
@@ -369,6 +376,7 @@ const getRulesCopy = (isEnglish: boolean) => isEnglish
       delete: '删除',
       level: '级别',
       abstractTitle: '摘要标题',
+      abstractTitleStyle: '标题字形',
       abstractBody: '摘要正文',
       abstractLength: '字数范围',
       keywords: '关键词',
@@ -380,7 +388,9 @@ const getRulesCopy = (isEnglish: boolean) => isEnglish
       tableCaption: '表题注',
       toc: '目录',
       tocTitle: '目录标题',
-      tocBody: '目录正文',
+      tocChapter: '各章目录',
+      tocSection: '一级节标题目录',
+      tocSubsection: '二级节标题目录',
       checkMode: '检查方式',
       font: '字体',
       size: '字号',
@@ -399,6 +409,7 @@ const getRulesCopy = (isEnglish: boolean) => isEnglish
       left: '居左',
       center: '居中',
       right: '居右',
+      justify: '两端对齐',
       top: '顶部',
       bottom: '底部',
       arabic: '阿拉伯数字',
@@ -569,12 +580,12 @@ const defaultRules: PaperRuleConfig = {
   firstLineIndent: '2字符',
   headingFormats: 'Level 1: 黑体 三号; Level 2: 黑体 四号; Level 3: 黑体 小四',
   pageNumberRule: '底部居中，阿拉伯数字',
-  abstractFormat: '摘要标题黑体小二居中；正文宋体小四，固定值20磅；300-500字',
+  abstractFormat: '摘要标题|字体=黑体|字号=小二|字形=加粗|对齐=居中|行距=1倍|段前=0pt|段后=0pt；正文|字体=宋体|字号=小四|行距=20pt|段前=0pt|段后=0pt；300-500字',
   keywordFormat: '关键词三字加粗；宋体小四；3-5个，词间用分号分隔',
   referenceFormat: 'GB/T 7714-2005',
   figureCaptionRule: '图题注|位置=下方|对齐=居中|字体=宋体|字号=五号|行距=无要求|段前=0pt|段后=0pt|首行缩进=无要求',
   tableCaptionRule: '表题注|位置=上方|对齐=居中|字体=宋体|字号=五号|行距=无要求|段前=0pt|段后=0pt|首行缩进=无要求',
-  tocRule: '目录标题|字体=黑体|字号=小二|对齐=居中|行距=无要求|段前=12pt|段后=12pt|首行缩进=无要求；目录正文|字体=宋体|字号=小四|对齐=无要求|行距=20pt|段前=0pt|段后=0pt|首行缩进=无要求',
+  tocRule: '目录标题|字体=黑体|字号=三号|对齐=居中|行距=1倍|段前=无要求|段后=无要求|首行缩进=无要求；各章目录|字体=宋体|字号=四号|对齐=两端对齐|行距=20pt|段前=0pt|段后=0pt|首行缩进=无要求；一级节标题目录|字体=宋体|字号=小四|对齐=两端对齐|行距=20pt|段前=0pt|段后=0pt|首行缩进=1字符；二级节标题目录|字体=宋体|字号=小四|对齐=两端对齐|行距=20pt|段前=0pt|段后=0pt|首行缩进=2字符',
 };
 
 const defaultFormValues = (templateNameDefault = TEMPLATE_NAME_DEFAULT): RuleFormValues => ({
@@ -619,9 +630,14 @@ const defaultFormValues = (templateNameDefault = TEMPLATE_NAME_DEFAULT): RuleFor
   abstract: {
     titleFont: defaultFontChoice('黑体'),
     titleSize: defaultSizeChoice('小二'),
+    titleBold: 'bold',
     titleAlignment: 'center',
-    titleLineHeight: noRequirementLineHeight(),
-    titleSpacing: noRequirementSpacing(),
+    titleLineHeight: {
+      mode: 'multiple',
+      value: 1,
+      unit: '倍',
+    },
+    titleSpacing: defaultSpacing(),
     bodyFont: defaultFontChoice('宋体'),
     bodySize: defaultSizeChoice('小四'),
     lineHeight: {
@@ -663,20 +679,44 @@ const defaultFormValues = (templateNameDefault = TEMPLATE_NAME_DEFAULT): RuleFor
     mode: 'custom',
     title: createParagraphStyle({
       font: defaultFontChoice('黑体'),
-      size: defaultSizeChoice('小二'),
+      size: defaultSizeChoice('三号'),
       alignment: 'center',
-      spacing: {
-        mode: 'custom',
-        before: 12,
-        after: 12,
-        unit: 'pt',
+      lineHeight: {
+        mode: 'multiple',
+        value: 1,
+        unit: '倍',
       },
     }),
-    body: createParagraphStyle({
+    chapter: createParagraphStyle({
       font: defaultFontChoice('宋体'),
-      size: defaultSizeChoice('小四'),
+      size: defaultSizeChoice('四号'),
+      alignment: 'justify',
       lineHeight: defaultLineHeight(),
       spacing: defaultSpacing(),
+    }),
+    section: createParagraphStyle({
+      font: defaultFontChoice('宋体'),
+      size: defaultSizeChoice('小四'),
+      alignment: 'justify',
+      lineHeight: defaultLineHeight(),
+      spacing: defaultSpacing(),
+      indent: {
+        mode: 'custom',
+        value: 1,
+        unit: '字符',
+      },
+    }),
+    subsection: createParagraphStyle({
+      font: defaultFontChoice('宋体'),
+      size: defaultSizeChoice('小四'),
+      alignment: 'justify',
+      lineHeight: defaultLineHeight(),
+      spacing: defaultSpacing(),
+      indent: {
+        mode: 'custom',
+        value: 2,
+        unit: '字符',
+      },
     }),
   },
 });
@@ -738,7 +778,7 @@ const resolveLineHeight = (value: LineHeightValue): string => {
     return `${formatNumber(value.value)}${value.unit}`;
   }
 
-  return `${formatNumber(value.value)}`;
+  return `${formatNumber(value.value)}倍`;
 };
 
 const resolveSpacing = (value: SpacingValue): string => {
@@ -931,6 +971,10 @@ const parseAlignmentOption = (value: string | undefined): AlignmentOption => {
     return 'none';
   }
 
+  if (resolved.includes('两端对齐') || /\b(?:both|justify|justified)\b/i.test(resolved)) {
+    return 'justify';
+  }
+
   if (resolved.includes('居左') || resolved.includes('左对齐') || /\bleft\b/i.test(resolved)) {
     return 'left';
   }
@@ -1001,6 +1045,11 @@ const parseAbstract = (value: string | undefined, fallback: RuleFormValues['abst
   return {
     titleFont: titleStyle.font,
     titleSize: titleStyle.size,
+    titleBold: titleSegment.includes('加粗') || /\bbold\b/i.test(titleSegment)
+      ? 'bold'
+      : titleSegment.includes('常规') || /\bnormal\b/i.test(titleSegment)
+        ? 'normal'
+        : fallback.titleBold,
     titleAlignment: titleStyle.alignment,
     titleLineHeight: titleStyle.lineHeight,
     titleSpacing: titleStyle.spacing,
@@ -1045,7 +1094,7 @@ const parseParagraphStyle = (value: string | undefined, fallback: ParagraphStyle
   const resolved = value ?? '';
   const parts = resolved.split('|').map((item) => item.trim());
   const spacingSegment = parts.find((item) => item.includes('段前') || item.includes('段后')) ?? resolved;
-  const lineHeightSegment = parts.find((item) => item.includes('行距')) ?? resolved;
+  const lineHeightSegment = parts.find((item) => item.includes('行距') || item.includes('固定值') || item.includes('单倍') || item.includes('倍'));
   const indentSegment = parts.find((item) => item.includes('首行缩进')) ?? resolved;
   const alignmentSegment = parts.find((item) => item.includes('对齐') || item.includes('居中') || item.includes('居左') || item.includes('居右')) ?? resolved;
   const fontSegment = parts.find((item) => item.includes('字体=')) ?? resolved;
@@ -1086,13 +1135,18 @@ const parseToc = (value: string | undefined, fallback: TocFormValue): TocFormVal
   }
 
   const segments = splitTokens(value);
-  const titleSegment = segments.find((item) => item.includes('目录标题') || item.includes('标题')) ?? '';
-  const bodySegment = segments.find((item) => item.includes('目录正文') || item.includes('正文')) ?? '';
+  const titleSegment = segments.find((item) => item.includes('目录标题') || /^标题(?:\||[:：=]|$)/.test(item)) ?? '';
+  const legacyBodySegment = segments.find((item) => item.includes('目录正文') || item.includes('正文')) ?? '';
+  const chapterSegment = segments.find((item) => item.includes('各章目录') || item.includes('章目录')) ?? legacyBodySegment;
+  const sectionSegment = segments.find((item) => item.includes('一级节标题目录')) ?? legacyBodySegment;
+  const subsectionSegment = segments.find((item) => item.includes('二级节标题目录')) ?? legacyBodySegment;
 
   return {
     mode: 'custom',
     title: parseParagraphStyle(titleSegment, fallback.title),
-    body: parseParagraphStyle(bodySegment, fallback.body),
+    chapter: parseParagraphStyle(chapterSegment, fallback.chapter),
+    section: parseParagraphStyle(sectionSegment, fallback.section),
+    subsection: parseParagraphStyle(subsectionSegment, fallback.subsection),
   };
 };
 
@@ -1152,7 +1206,7 @@ const buildHeadingSegment = (item: HeadingRuleFormValue): string | null => {
   }
 
   if (item.alignment !== 'none') {
-    parts.push(`对齐=${item.alignment === 'left' ? '居左' : item.alignment === 'right' ? '居右' : '居中'}`);
+    parts.push(`对齐=${formatAlignmentRule(item.alignment)}`);
   }
 
   if (!hasNoRequirement(lineHeight)) {
@@ -1171,13 +1225,25 @@ const buildHeadingSegment = (item: HeadingRuleFormValue): string | null => {
   return parts.length > 0 ? `Level ${item.level}: ${parts.join(' | ')}` : null;
 };
 
+const formatAlignmentRule = (value: AlignmentOption): string => {
+  if (value === 'none') {
+    return NO_REQUIREMENT;
+  }
+
+  if (value === 'justify') {
+    return '两端对齐';
+  }
+
+  return value === 'left' ? '居左' : value === 'right' ? '居右' : '居中';
+};
+
 const buildPageNumberRule = (value: RuleFormValues['pageNumber']): string => {
   if (value.mode === 'none') {
     return NO_REQUIREMENT;
   }
 
   const positionText = value.position === 'top' ? '顶部' : '底部';
-  const alignmentText = value.alignment === 'left' ? '居左' : value.alignment === 'right' ? '居右' : value.alignment === 'center' ? '居中' : NO_REQUIREMENT;
+  const alignmentText = formatAlignmentRule(value.alignment);
   const styleText = value.style === 'romanLower'
     ? '小写罗马数字'
     : value.style === 'romanUpper'
@@ -1240,7 +1306,7 @@ const buildParagraphStyleSegments = (value: ParagraphStyleFormValue, fallbackFon
   }
 
   if (value.alignment !== 'none') {
-    parts.push(`对齐=${value.alignment === 'left' ? '居左' : value.alignment === 'right' ? '居右' : '居中'}`);
+    parts.push(`对齐=${formatAlignmentRule(value.alignment)}`);
   }
 
   if (!hasNoRequirement(lineHeight)) {
@@ -1282,6 +1348,11 @@ const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
     lineHeight: values.abstract.titleLineHeight,
     spacing: values.abstract.titleSpacing,
   }), '黑体', '小二');
+  const abstractTitleStyleSegment = values.abstract.titleBold === 'bold'
+    ? abstractTitleSegment.replace('摘要标题|', '摘要标题|字形=加粗|')
+    : values.abstract.titleBold === 'normal'
+      ? abstractTitleSegment.replace('摘要标题|', '摘要标题|字形=常规|')
+      : abstractTitleSegment;
   const abstractBodySegment = buildNamedParagraphStyleSegment('正文', createParagraphStyle({
     font: values.abstract.bodyFont,
     size: values.abstract.bodySize,
@@ -1289,7 +1360,7 @@ const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
     spacing: values.abstract.bodySpacing,
   }), '宋体', '小四');
   const abstractSegments = [
-    abstractTitleSegment,
+    abstractTitleStyleSegment,
     abstractBodySegment,
     values.abstract.lengthMode === 'custom' ? `${values.abstract.minLength}-${values.abstract.maxLength}字` : '字数无要求',
   ];
@@ -1308,8 +1379,10 @@ const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
   ];
   const figureCaptionParts = buildParagraphStyleSegments(values.figureCaption, '宋体', '五号');
   const tableCaptionParts = buildParagraphStyleSegments(values.tableCaption, '宋体', '五号');
-  const tocTitleParts = buildParagraphStyleSegments(values.toc.title, '黑体', '小二');
-  const tocBodyParts = buildParagraphStyleSegments(values.toc.body, '宋体', '小四');
+  const tocTitleParts = buildParagraphStyleSegments(values.toc.title, '黑体', '三号');
+  const tocChapterParts = buildParagraphStyleSegments(values.toc.chapter, '宋体', '四号');
+  const tocSectionParts = buildParagraphStyleSegments(values.toc.section, '宋体', '小四');
+  const tocSubsectionParts = buildParagraphStyleSegments(values.toc.subsection, '宋体', '小四');
 
   return {
     pageSize: values.pageSize === 'none' ? NO_REQUIREMENT : values.pageSize,
@@ -1343,7 +1416,9 @@ const buildRuleConfig = (values: RuleFormValues): PaperRuleConfig => {
       ? NO_REQUIREMENT
       : [
         ['目录标题', ...tocTitleParts].join('|'),
-        ['目录正文', ...tocBodyParts].join('|'),
+        ['各章目录', ...tocChapterParts].join('|'),
+        ['一级节标题目录', ...tocSectionParts].join('|'),
+        ['二级节标题目录', ...tocSubsectionParts].join('|'),
       ].join('；'),
   };
 };
@@ -1638,6 +1713,7 @@ const AlignmentField: React.FC<{
         { label: copy.left, value: 'left' },
         { label: copy.center, value: 'center' },
         { label: copy.right, value: 'right' },
+        { label: copy.justify, value: 'justify' },
       ]}
     />
   </Form.Item>
@@ -2163,6 +2239,17 @@ const RulesConfig: React.FC = () => {
                   <Card size="small" title={copy.abstractTitle} style={{ height: '100%' }}>
                     <FontChoiceField form={form} label={copy.font} name={['abstract', 'titleFont']} copy={copy} isEnglish={isEnglish} />
                     <SizeChoiceField form={form} label={copy.size} name={['abstract', 'titleSize']} copy={copy} isEnglish={isEnglish} />
+                    <Form.Item name={['abstract', 'titleBold']} label={copy.abstractTitleStyle}>
+                      <Select
+                        id={toFieldDomId(['abstract', 'titleBold'])}
+                        aria-label={copy.abstractTitleStyle}
+                        options={[
+                          { label: copy.noRequirement, value: 'none' },
+                          { label: copy.bold, value: 'bold' },
+                          { label: copy.normal, value: 'normal' },
+                        ]}
+                      />
+                    </Form.Item>
                     <AlignmentField label={copy.alignment} name={['abstract', 'titleAlignment']} copy={copy} />
                     <LineHeightField form={form} label={copy.lineHeight} name={['abstract', 'titleLineHeight']} copy={copy} isEnglish={isEnglish} />
                     <SpacingField form={form} label={copy.spacing} name={['abstract', 'titleSpacing']} copy={copy} isEnglish={isEnglish} />
@@ -2395,8 +2482,18 @@ const RulesConfig: React.FC = () => {
                         </Card>
                       </Col>
                       <Col span={24}>
-                        <Card size="small" title={copy.tocBody}>
-                          <ParagraphStyleFields form={form} baseName={['toc', 'body']} copy={copy} isEnglish={isEnglish} />
+                        <Card size="small" title={copy.tocChapter} style={{ marginBottom: 16 }}>
+                          <ParagraphStyleFields form={form} baseName={['toc', 'chapter']} copy={copy} isEnglish={isEnglish} />
+                        </Card>
+                      </Col>
+                      <Col span={24}>
+                        <Card size="small" title={copy.tocSection} style={{ marginBottom: 16 }}>
+                          <ParagraphStyleFields form={form} baseName={['toc', 'section']} copy={copy} isEnglish={isEnglish} />
+                        </Card>
+                      </Col>
+                      <Col span={24}>
+                        <Card size="small" title={copy.tocSubsection}>
+                          <ParagraphStyleFields form={form} baseName={['toc', 'subsection']} copy={copy} isEnglish={isEnglish} />
                         </Card>
                       </Col>
                     </Row>

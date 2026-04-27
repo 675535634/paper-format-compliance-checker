@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { fixOptionValues } from '../types/index.js';
 
 export const paperRuleConfigSchema = z.object({
   pageSize: z.string().min(1),
@@ -43,6 +44,10 @@ export const createCheckSchema = z.object({
   { message: 'Either templateId or inlineRuleConfig is required.' }
 );
 
+export const fixDownloadSchema = z.object({
+  fixOptions: z.array(z.enum(fixOptionValues)).min(1).optional(),
+});
+
 export const registerSchema = z.object({
   username: z.string().trim().min(3).max(32),
   email: z.email(),
@@ -69,6 +74,7 @@ export const updateTemplateVisibilitySchema = z.object({
 export type CreateTemplateInput = z.infer<typeof createTemplateSchema>;
 export type UpdateTemplateInput = z.infer<typeof updateTemplateSchema>;
 export type CreateCheckInput = z.infer<typeof createCheckSchema>;
+export type FixDownloadInput = z.infer<typeof fixDownloadSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ListPublicTemplatesInput = z.infer<typeof listPublicTemplatesSchema>;

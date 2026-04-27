@@ -3,17 +3,34 @@ import os from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
 
-interface ParagraphFixture {
+interface RunFixture {
   text: string;
-  styleId?: string;
-  alignment?: 'left' | 'center' | 'right';
   fontFamily?: string;
   fontSizeHalfPoints?: number;
+  fontColor?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean | string;
+}
+
+interface ParagraphFixture extends RunFixture {
+  styleId?: string;
+  alignment?: 'left' | 'center' | 'right';
+  runs?: RunFixture[];
+  paragraphMarkFontFamily?: string;
+  paragraphMarkFontSizeHalfPoints?: number;
   line?: number;
   lineRule?: 'auto' | 'exact' | 'atLeast';
   before?: number;
   after?: number;
   firstLineChars?: number;
+  firstLine?: number;
+  leftChars?: number;
+  left?: number;
+  rightChars?: number;
+  right?: number;
+  hangingChars?: number;
+  hanging?: number;
   numbering?: {
     numId: string;
     ilvl: number;
@@ -47,6 +64,7 @@ interface CreateDocxFixtureInput {
   paragraphs?: ParagraphFixture[];
   documentBlocks?: DocumentBlockFixture[];
   numbering?: NumberingFixture[];
+  defaultFontSizeHalfPoints?: number;
   headers?: string[];
   headerParagraphs?: ParagraphFixture[];
   footerParagraphs?: ParagraphFixture[];
@@ -59,6 +77,27 @@ const xmlEscape = (value: string): string =>
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+
+const buildRunPropertiesXml = (run: Partial<RunFixture>): string => [
+  run.fontFamily
+    ? `<w:rFonts w:ascii="${run.fontFamily}" w:hAnsi="${run.fontFamily}" w:eastAsia="${run.fontFamily}"/>`
+    : '',
+  run.fontSizeHalfPoints !== undefined
+    ? `<w:sz w:val="${run.fontSizeHalfPoints}"/>`
+    : '',
+  run.fontColor
+    ? `<w:color w:val="${run.fontColor.replace(/^#/, '')}"/>`
+    : '',
+  run.bold !== undefined
+    ? `<w:b${run.bold ? '' : ' w:val="0"'}/>`
+    : '',
+  run.italic !== undefined
+    ? `<w:i${run.italic ? '' : ' w:val="0"'}/>`
+    : '',
+  run.underline
+    ? `<w:u w:val="${typeof run.underline === 'string' ? run.underline : 'single'}"/>`
+    : '',
+].join('');
 
 const buildParagraphXml = (paragraph: ParagraphFixture): string => {
   const paragraphProperties: string[] = [];
@@ -81,6 +120,14 @@ const buildParagraphXml = (paragraph: ParagraphFixture): string => {
     );
   }
 
+  const paragraphMarkRunProperties = buildRunPropertiesXml({
+    fontFamily: paragraph.paragraphMarkFontFamily,
+    fontSizeHalfPoints: paragraph.paragraphMarkFontSizeHalfPoints,
+  });
+  if (paragraphMarkRunProperties) {
+    paragraphProperties.push(`<w:rPr>${paragraphMarkRunProperties}</w:rPr>`);
+  }
+
   if (
     paragraph.line !== undefined
     || paragraph.before !== undefined
@@ -99,26 +146,55 @@ const buildParagraphXml = (paragraph: ParagraphFixture): string => {
     );
   }
 
-  if (paragraph.firstLineChars !== undefined) {
-    paragraphProperties.push(`<w:ind w:firstLineChars="${paragraph.firstLineChars}"/>`);
+  if (
+    paragraph.firstLineChars !== undefined
+    || paragraph.firstLine !== undefined
+    || paragraph.leftChars !== undefined
+    || paragraph.left !== undefined
+    || paragraph.rightChars !== undefined
+    || paragraph.right !== undefined
+    || paragraph.hangingChars !== undefined
+    || paragraph.hanging !== undefined
+  ) {
+    paragraphProperties.push(`<w:ind${
+      paragraph.firstLineChars !== undefined ? ` w:firstLineChars="${paragraph.firstLineChars}"` : ''
+    }${
+      paragraph.firstLine !== undefined ? ` w:firstLine="${paragraph.firstLine}"` : ''
+    }${
+      paragraph.leftChars !== undefined ? ` w:leftChars="${paragraph.leftChars}"` : ''
+    }${
+      paragraph.left !== undefined ? ` w:left="${paragraph.left}"` : ''
+    }${
+      paragraph.rightChars !== undefined ? ` w:rightChars="${paragraph.rightChars}"` : ''
+    }${
+      paragraph.right !== undefined ? ` w:right="${paragraph.right}"` : ''
+    }${
+      paragraph.hangingChars !== undefined ? ` w:hangingChars="${paragraph.hangingChars}"` : ''
+    }${
+      paragraph.hanging !== undefined ? ` w:hanging="${paragraph.hanging}"` : ''
+    }/>`);
   }
 
-  const runProperties = [
-    paragraph.fontFamily
-      ? `<w:rFonts w:ascii="${paragraph.fontFamily}" w:hAnsi="${paragraph.fontFamily}" w:eastAsia="${paragraph.fontFamily}"/>`
-      : '',
-    paragraph.fontSizeHalfPoints !== undefined
-      ? `<w:sz w:val="${paragraph.fontSizeHalfPoints}"/>`
-      : '',
-  ].join('');
+  const runs = paragraph.runs ?? [{
+    text: paragraph.text,
+    fontFamily: paragraph.fontFamily,
+    fontSizeHalfPoints: paragraph.fontSizeHalfPoints,
+    fontColor: paragraph.fontColor,
+    bold: paragraph.bold,
+    italic: paragraph.italic,
+    underline: paragraph.underline,
+  }];
 
   return `
     <w:p>
       ${paragraphProperties.length > 0 ? `<w:pPr>${paragraphProperties.join('')}</w:pPr>` : ''}
-      <w:r>
-        ${runProperties ? `<w:rPr>${runProperties}</w:rPr>` : ''}
-        <w:t>${xmlEscape(paragraph.text)}</w:t>
-      </w:r>
+      ${runs.map((run) => {
+        const runProperties = buildRunPropertiesXml(run);
+        return `<w:r>
+          ${runProperties ? `<w:rPr>${runProperties}</w:rPr>` : ''}
+          <w:t>${xmlEscape(run.text)}</w:t>
+        </w:r>`;
+      }).join('')}
     </w:p>
   `;
 };
@@ -191,7 +267,7 @@ export const createDocxFixture = async (input: CreateDocxFixtureInput): Promise<
     <w:rPrDefault>
       <w:rPr>
         <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>
-        <w:sz w:val="24"/>
+        <w:sz w:val="${input.defaultFontSizeHalfPoints ?? 24}"/>
       </w:rPr>
     </w:rPrDefault>
   </w:docDefaults>

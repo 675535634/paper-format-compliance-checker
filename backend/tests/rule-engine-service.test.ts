@@ -58,6 +58,79 @@ afterEach(async () => {
 });
 
 describe('evaluateDocumentAgainstRules', () => {
+  it('detects a standalone spaced abstract title without relying on Word heading style', () => {
+    const documentModel: ParsedDocxModel = {
+      paragraphCount: 4,
+      headerTexts: [],
+      hasPageNumberField: false,
+      pageSize: { widthCm: 21, heightCm: 29.7, label: 'A4' },
+      marginsCm: { top: 3, bottom: 3, left: 3, right: 3 },
+      defaultFontFamily: zh.bodyFont,
+      defaultFontSizePt: 12,
+      paragraphs: [
+        { index: 1, text: '\u6458  \u8981', fontFamily: zh.headingFont, fontSizePt: 18, alignment: 'center' },
+        { index: 2, text: zh.abstractText, fontFamily: zh.bodyFont, fontSizePt: 12 },
+        { index: 3, text: zh.keywords, fontFamily: zh.bodyFont, fontSizePt: 12 },
+        { index: 4, text: '第一章 绪论', fontFamily: zh.headingFont, fontSizePt: 16 },
+      ],
+    };
+
+    const issues = evaluateDocumentAgainstRules(documentModel, {
+      ...defaultRuleConfig,
+      pageSize: '无要求',
+      margin: '无要求',
+      headerRule: '无要求',
+      pageNumberRule: '无要求',
+      coverItems: '无要求',
+      requiredSections: '无要求',
+      keywordFormat: '无要求',
+      headingFormats: '无要求',
+      referenceFormat: '无要求',
+      tocRule: '无要求',
+      figureCaptionRule: '无要求',
+      tableCaptionRule: '无要求',
+      abstractFormat: '摘要标题: 黑体 小二; 摘要正文: 宋体 小四',
+    });
+
+    expect(issues.some((issue) => issue.reason.toLowerCase().includes('abstract heading'))).toBe(false);
+  });
+
+  it('does not treat a references entry inside the table of contents as the real references section', () => {
+    const documentModel: ParsedDocxModel = {
+      paragraphCount: 3,
+      headerTexts: [],
+      hasPageNumberField: false,
+      pageSize: { widthCm: 21, heightCm: 29.7, label: 'A4' },
+      marginsCm: { top: 3, bottom: 3, left: 3, right: 3 },
+      defaultFontFamily: zh.bodyFont,
+      defaultFontSizePt: 12,
+      paragraphs: [
+        { index: 1, text: zh.toc, headingLevel: 1, fontFamily: zh.headingFont, fontSizePt: 18 },
+        { index: 2, text: '第一章 绪论\t1', styleId: 'TOC1', styleName: 'toc 1', fontFamily: zh.bodyFont, fontSizePt: 12 },
+        { index: 3, text: '参考文献\t44', styleId: 'TOC1', styleName: 'toc 1', fontFamily: zh.bodyFont, fontSizePt: 12 },
+      ],
+    };
+
+    const issues = evaluateDocumentAgainstRules(documentModel, {
+      ...defaultRuleConfig,
+      pageSize: '无要求',
+      margin: '无要求',
+      headerRule: '无要求',
+      pageNumberRule: '无要求',
+      coverItems: '无要求',
+      requiredSections: '无要求',
+      abstractFormat: '无要求',
+      keywordFormat: '无要求',
+      headingFormats: '无要求',
+      tocRule: '无要求',
+      figureCaptionRule: '无要求',
+      tableCaptionRule: '无要求',
+      referenceFormat: 'GB/T 7714',
+    });
+
+    expect(issues.some((issue) => issue.reason.toLowerCase().includes('references section'))).toBe(true);
+  });
+
   it('does not flag compliant school headers, required sections, or numbered references when the model matches the template', () => {
     const documentModel: ParsedDocxModel = {
       paragraphCount: 24,
@@ -88,9 +161,9 @@ describe('evaluateDocumentAgainstRules', () => {
         { index: 8, text: zh.completionDate },
         { index: 9, text: zh.originality },
         { index: 10, text: zh.signature },
-        { index: 11, text: zh.toc, headingLevel: 1, fontFamily: zh.headingFont, fontSizePt: 18, alignment: 'center', spacingBeforePt: 12, spacingAfterPt: 12 },
-        { index: 12, text: zh.tocEntry1, fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0 },
-        { index: 13, text: zh.tocEntry2, fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0 },
+        { index: 11, text: zh.toc, headingLevel: 1, fontFamily: zh.headingFont, fontSizePt: 16, alignment: 'center' },
+        { index: 12, text: zh.tocEntry1, fontFamily: zh.bodyFont, fontSizePt: 14, alignment: 'both', lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0 },
+        { index: 13, text: zh.tocEntry2, fontFamily: zh.bodyFont, fontSizePt: 14, alignment: 'both', lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0 },
         { index: 14, text: zh.abstract, headingLevel: 1, fontFamily: zh.headingFont, fontSizePt: 18 },
         { index: 15, text: zh.abstractText.repeat(20), fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points' },
         { index: 16, text: zh.keywords, fontFamily: zh.bodyFont, fontSizePt: 12 },
@@ -176,7 +249,7 @@ describe('evaluateDocumentAgainstRules', () => {
 
   it('accepts common cover-field aliases and a bare Chinese completion date on the title page', () => {
     const documentModel: ParsedDocxModel = {
-      paragraphCount: 9,
+      paragraphCount: 10,
       headerTexts: [zh.headerLeft, zh.headerRight],
       hasPageNumberField: false,
       pageSize: {
@@ -226,6 +299,53 @@ describe('evaluateDocumentAgainstRules', () => {
 
     expect(issues.some((issue) => issue.reason.includes('cover-field label'))).toBe(false);
     expect(issues.some((issue) => issue.reason.includes('cover completion date'))).toBe(false);
+  });
+
+  it('accepts a resolved student-name and paper-title header when the rule uses placeholders', () => {
+    const documentModel: ParsedDocxModel = {
+      paragraphCount: 21,
+      headerTexts: [
+        '\u5730\u5927\u9ad8\u7b49\u5b66\u5386\u7ee7\u7eed\u6559\u80b2',
+        '\u8499\u4e30\u534e\uff1a\u57fa\u4e8eVue 3\u4e0eNode.js\u7684\u667a\u6167\u6821\u56ed\u4fe1\u606f\u5e73\u53f0\u8bbe\u8ba1\u4e0e\u5b9e\u73b0',
+      ],
+      hasPageNumberField: false,
+      pageSize: {
+        widthCm: 21,
+        heightCm: 29.7,
+        label: 'A4',
+      },
+      marginsCm: {
+        top: 3,
+        bottom: 3,
+        left: 3,
+        right: 3,
+      },
+      paragraphs: [
+        { index: 1, text: zh.bodyText },
+      ],
+    };
+
+    const issues = evaluateDocumentAgainstRules(documentModel, {
+      ...defaultRuleConfig,
+      headerRule: '\u5947\u6570\u9875\uff1a\u5730\u5927\u9ad8\u7b49\u5b66\u5386\u7ee7\u7eed\u6559\u80b2\uff1b\u5076\u6570\u9875\uff1a\u5b66\u751f\u59d3\u540d\uff1a\u8bba\u6587\u9898\u76ee',
+      coverItems: '\u65e0\u8981\u6c42',
+      requiredSections: '\u65e0\u8981\u6c42',
+      pageNumberRule: '\u65e0\u8981\u6c42',
+      bodyFont: '\u65e0\u8981\u6c42',
+      bodyFontSize: '\u65e0\u8981\u6c42',
+      lineHeight: '\u65e0\u8981\u6c42',
+      paragraphSpacing: '\u65e0\u8981\u6c42',
+      firstLineIndent: '\u65e0\u8981\u6c42',
+      headingFormats: '',
+      abstractFormat: '\u65e0\u8981\u6c42',
+      keywordFormat: '\u65e0\u8981\u6c42',
+      referenceFormat: '\u65e0\u8981\u6c42',
+      figureCaptionRule: '\u65e0\u8981\u6c42',
+      tableCaptionRule: '\u65e0\u8981\u6c42',
+      tocRule: '\u65e0\u8981\u6c42',
+    });
+
+    expect(issues.some((issue) => issue.reason.toLowerCase().includes('school header text'))).toBe(false);
   });
 
   it('flags missing cover fields, required sections, abstract length, keyword separators, and empty references when they violate rules', () => {
@@ -319,7 +439,7 @@ describe('evaluateDocumentAgainstRules', () => {
     expect(issues.some((issue) => issue.reason.includes('cover completion date'))).toBe(true);
   });
 
-  it('does not report completion time as missing when a bare Chinese date is present on the cover', () => {
+  it('does not report completion time as missing when a bare Chinese date placeholder is present on the cover', () => {
     const documentModel: ParsedDocxModel = {
       paragraphCount: 3,
       headerTexts: [],
@@ -339,7 +459,7 @@ describe('evaluateDocumentAgainstRules', () => {
       defaultFontSizePt: 12,
       paragraphs: [
         { index: 1, text: zh.title },
-        { index: 2, text: '二〇二六年四月' },
+        { index: 2, text: '\u4e8c\u25cb\u00d7\u00d7\u5e74\u00d7\u6708' },
         { index: 3, text: zh.abstract, headingLevel: 1, fontFamily: zh.headingFont, fontSizePt: 18 },
       ],
     };
@@ -417,6 +537,121 @@ describe('evaluateDocumentAgainstRules', () => {
     expect(issues.some((issue) => issue.reason.includes('Heading line spacing'))).toBe(false);
     expect(issues.some((issue) => issue.reason.includes('No heading found'))).toBe(false);
     expect(issues.some((issue) => issue.reason.includes('body font does not match'))).toBe(false);
+  });
+
+  it('does not infer missing signature or date prompts from originality statement content', () => {
+    const documentModel: ParsedDocxModel = {
+      paragraphCount: 2,
+      headerTexts: [],
+      hasPageNumberField: false,
+      pageSize: {
+        widthCm: 21,
+        heightCm: 29.7,
+        label: 'A4',
+      },
+      marginsCm: {
+        top: 3,
+        bottom: 3,
+        left: 3,
+        right: 3,
+      },
+      defaultFontFamily: zh.bodyFont,
+      defaultFontSizePt: 12,
+      paragraphs: [
+        { index: 1, text: zh.originality, alignment: 'center' },
+        {
+          index: 2,
+          text: '\u672c\u4eba\u90d1\u91cd\u58f0\u660e\uff1a\u672c\u4eba\u6240\u5448\u4ea4\u7684\u672c\u79d1\u6bd5\u4e1a\u8bba\u6587\u4e3a\u72ec\u7acb\u64b0\u5199\u5b8c\u6210\u3002',
+          fontFamily: zh.bodyFont,
+          fontSizePt: 12,
+        },
+      ],
+    };
+
+    const issues = evaluateDocumentAgainstRules(documentModel, {
+      ...defaultRuleConfig,
+      coverItems: '\u65e0\u8981\u6c42',
+      requiredSections: zh.originality,
+      headerRule: '\u65e0\u8981\u6c42',
+      pageNumberRule: '\u65e0\u8981\u6c42',
+      abstractFormat: '\u65e0\u8981\u6c42',
+      keywordFormat: '\u65e0\u8981\u6c42',
+      referenceFormat: '\u65e0\u8981\u6c42',
+      figureCaptionRule: '\u65e0\u8981\u6c42',
+      tableCaptionRule: '\u65e0\u8981\u6c42',
+      tocRule: '\u65e0\u8981\u6c42',
+      headingFormats: '\u65e0\u8981\u6c42',
+      bodyFont: '\u65e0\u8981\u6c42',
+      bodyFontSize: '\u65e0\u8981\u6c42',
+      lineHeight: '\u65e0\u8981\u6c42',
+      paragraphSpacing: '\u65e0\u8981\u6c42',
+      firstLineIndent: '\u65e0\u8981\u6c42',
+    });
+
+    expect(issues.some((issue) => issue.reason.includes('originality statement'))).toBe(false);
+  });
+
+  it('reports mixed fonts inside a single body paragraph', () => {
+    const documentModel: ParsedDocxModel = {
+      paragraphCount: 1,
+      headerTexts: [],
+      hasPageNumberField: false,
+      pageSize: {
+        widthCm: 21,
+        heightCm: 29.7,
+        label: 'A4',
+      },
+      marginsCm: {
+        top: 3,
+        bottom: 3,
+        left: 3,
+        right: 3,
+      },
+      defaultFontFamily: zh.bodyFont,
+      defaultFontSizePt: 12,
+      paragraphs: [
+        ...Array.from({ length: 20 }, (_, index) => ({
+          index: index + 1,
+          text: `cover ${index + 1}`,
+          fontFamily: zh.bodyFont,
+          fontSizePt: 12,
+        })),
+        {
+          index: 21,
+          text: zh.bodyText,
+          fontFamily: zh.bodyFont,
+          fontFamilies: [zh.bodyFont, '\u5fae\u8f6f\u96c5\u9ed1'],
+          fontSizePt: 12,
+          lineHeight: 20,
+          lineHeightMode: 'points',
+          firstLineChars: 2,
+        },
+      ],
+    };
+
+    const issues = evaluateDocumentAgainstRules(documentModel, {
+      ...defaultRuleConfig,
+      coverItems: '\u65e0\u8981\u6c42',
+      requiredSections: '\u65e0\u8981\u6c42',
+      headerRule: '\u65e0\u8981\u6c42',
+      pageNumberRule: '\u65e0\u8981\u6c42',
+      abstractFormat: '\u65e0\u8981\u6c42',
+      keywordFormat: '\u65e0\u8981\u6c42',
+      referenceFormat: '\u65e0\u8981\u6c42',
+      figureCaptionRule: '\u65e0\u8981\u6c42',
+      tableCaptionRule: '\u65e0\u8981\u6c42',
+      tocRule: '\u65e0\u8981\u6c42',
+      headingFormats: '\u65e0\u8981\u6c42',
+      bodyFont: zh.bodyFont,
+      bodyFontSize: '12pt',
+      lineHeight: '20pt',
+      paragraphSpacing: '\u65e0\u8981\u6c42',
+      firstLineIndent: '2\u5b57\u7b26',
+    });
+
+    const fontIssue = issues.find((issue) => issue.reason === 'The body font does not match the rule configuration.');
+
+    expect(fontIssue?.currentValue).toBe(`${zh.bodyFont} / \u5fae\u8f6f\u96c5\u9ed1`);
   });
 
   it('prefers the real references heading over the table of contents entry', () => {
@@ -584,10 +819,11 @@ describe('evaluateDocumentAgainstRules', () => {
         { index: 3, text: '摘 要', fontFamily: zh.headingFont, fontSizePt: 18, alignment: 'center' },
         { index: 4, text: zh.abstractText.repeat(20), fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points' },
         { index: 5, text: zh.keywords, fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points' },
-        { index: 6, text: '目 录', fontFamily: zh.headingFont, fontSizePt: 18, alignment: 'center', spacingBeforePt: 12, spacingAfterPt: 12 },
-        { index: 7, text: '第一章 绪论', styleId: 'TOC1', styleName: 'toc 1', fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0 },
-        { index: 8, text: '1.1 研究背景', styleId: 'TOC2', styleName: 'toc 2', fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0 },
-        { index: 9, text: zh.bodyText, fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0, firstLineChars: 2 },
+        { index: 6, text: '目 录', fontFamily: zh.headingFont, fontSizePt: 16, alignment: 'center' },
+        { index: 7, text: '第一章 绪论', styleId: 'TOC1', styleName: 'toc 1', fontFamily: zh.bodyFont, fontSizePt: 14, alignment: 'both', lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0 },
+        { index: 8, text: '1.1 研究背景', styleId: 'TOC2', styleName: 'toc 2', fontFamily: zh.bodyFont, fontSizePt: 12, alignment: 'both', lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0, firstLineChars: 1 },
+        { index: 9, text: '1.1.1 研究动因', styleId: 'TOC3', styleName: 'toc 3', fontFamily: zh.bodyFont, fontSizePt: 12, alignment: 'both', lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0, firstLineChars: 2 },
+        { index: 10, text: zh.bodyText, fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0, firstLineChars: 2 },
       ],
     };
 
@@ -655,6 +891,35 @@ describe('evaluateDocumentAgainstRules', () => {
     expect(issues.some((issue) => issue.reason.includes('table caption does not match'))).toBe(false);
     expect(issues.some((issue) => issue.reason.includes('matching figure caption'))).toBe(false);
     expect(issues.some((issue) => issue.reason.includes('matching table caption'))).toBe(false);
+  });
+
+  it('does not treat figure range prose as a malformed caption', () => {
+    const documentModel: ParsedDocxModel = {
+      paragraphCount: 3,
+      headerTexts: [],
+      hasPageNumberField: true,
+      defaultFontFamily: zh.bodyFont,
+      defaultFontSizePt: 12,
+      paragraphs: [
+        { index: 1, text: '图6-1 系统登录界面', fontFamily: zh.bodyFont, fontSizePt: 10.5, alignment: 'center' },
+        { index: 2, text: '图6-1至图6-16展示了上述过程中的关键证据截图。其中，PDF 解析预览页面内容较长，因此将三道题的解析结果分别截取，以保证图中文字清晰可辨。', fontFamily: zh.bodyFont, fontSizePt: 12 },
+        { index: 3, text: zh.bodyText, fontFamily: zh.bodyFont, fontSizePt: 12, lineHeight: 20, lineHeightMode: 'points', spacingBeforePt: 0, spacingAfterPt: 0, firstLineChars: 2 },
+      ],
+    };
+
+    const issues = evaluateDocumentAgainstRules(documentModel, {
+      ...defaultRuleConfig,
+      coverItems: '无要求',
+      requiredSections: '无要求',
+      headingFormats: '',
+      abstractFormat: '无要求',
+      keywordFormat: '无要求',
+      referenceFormat: '无要求',
+      tocRule: '无要求',
+      tableCaptionRule: '无要求',
+    });
+
+    expect(issues.some((issue) => issue.location === 'Paragraph 2' && issue.reason.includes('figure caption'))).toBe(false);
   });
 
   it('checks abstract spacing plus header and footer text styles without confusing them with header text or page-number alignment rules', () => {

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "concurrently -n frontend,backend -c blue,green \"npm --prefix frontend run dev\" \"npm --prefix backend run dev\"",
     "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "start": "npm --prefix backend run start",
     "test:e2e": "npm --prefix frontend run test:e2e",
     "test:e2e:headed": "npm --prefix frontend run test:e2e:headed",
     "test:e2e:install": "npm --prefix frontend run test:e2e:install"
